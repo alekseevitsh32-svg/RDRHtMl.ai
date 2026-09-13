@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#140d07">
-<title>Red Dead Canvas — Вестерн</title>
+<title>Red Dead Canvas 3D — Вестерн от первого лица</title>
 <style>
   /* ==========================================================
      БАЗОВЫЕ СТИЛИ
@@ -18,7 +18,7 @@
     height: 100%;
     width: 100%;
     overflow: hidden;
-    background: #140d07;
+    background: #000;
     touch-action: none;
     overscroll-behavior: none;
     -webkit-user-select: none;
@@ -31,11 +31,12 @@
   canvas {
     display: block;
     touch-action: none;
-    cursor: crosshair;
-    background: #cf9f5e;
+    background: #000;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
   }
 
-  /* Подсказка внизу — только для клавиатуры */
   #подсказка {
     position: fixed;
     left: 0; right: 0; bottom: 6px;
@@ -45,11 +46,9 @@
     opacity: .38;
     pointer-events: none;
     text-shadow: 0 2px 6px #000;
-    letter-spacing: .4px;
     padding: 0 10px;
   }
 
-  /* На тач-устройствах подсказка не нужна */
   @media (pointer: coarse) {
     #подсказка { display: none; }
   }
@@ -57,189 +56,659 @@
 </head>
 <body>
 <canvas id="игра"></canvas>
-<div id="подсказка">WASD — движение · Мышь — прицел · ЛКМ — огонь · R — перезарядка · Q — Меткий глаз · E — конь · Shift — бег</div>
+<div id="подсказка">WASD — движение · Мышь — обзор · ЛКМ — огонь · R — перезарядка · Q — Меткий глаз · Shift — бег</div>
 
 <script>
 'use strict';
 
 /* ==========================================================
-   RED DEAD CANVAS
-   Вестерн от третьего лица.
-   Один файл. Никаких внешних ресурсов.
-   Работает на клавиатуре, мыши и сенсорных экранах (iPad).
+   RED DEAD CANVAS 3D
+   Настоящий 3D-шутер от первого лица на raycasting.
+   Все текстуры рисуются процедурно.
+   Работает на ПК и на iPad (тач).
    ========================================================== */
 
-/* ---------- ХОЛСТ ---------- */
+/* ==========================================================
+   1. КОНСТАНТЫ И РАЗМЕРЫ
+   ========================================================== */
+const РАЗМЕР_ТЕКСТУРЫ = 64;               // размер одной текстуры (квадрат)
+const МАСКА_ТЕКСТУРЫ = РАЗМЕР_ТЕКСТУРЫ - 1;
+
+const РАЗМЕР_КАРТЫ = 32;                  // 32x32 клетки
+const КАРТА = new Uint8Array(РАЗМЕР_КАРТЫ * РАЗМЕР_КАРТЫ);
+
+const ПЛОСКОСТЬ_X = 0.66;                 // половина ширины плоскости проекции (FOV ≈ 66°)
+
+/* Внутреннее (низкое) разрешение рендера */
+let ШИРИНА_БУФ = 320;
+let ВЫСОТА_БУФ = 200;
+
+/* Вспомогательные буферы */
+let imageData = null;
+let буфер = null;                          // Uint32 пиксели кадра
+const буферГлубины = new Float32Array(1024); // глубина стен по колонкам
+
+/* ==========================================================
+   2. ХОЛСТЫ
+   ========================================================== */
 const холст = document.getElementById('игра');
-const ctx = холст.getContext('2d');
-let Ш = 0, В = 0, ТЧ = 1; // ширина, высота, точка-частота (плотность пикселей)
+const ctx = холст.getContext('2d', { alpha: false });
 
-function обновитьРазмер(){
-  ТЧ = Math.min(window.devicePixelRatio || 1, 2);
-  Ш = window.innerWidth;
-  В = window.innerHeight;
-  холст.width  = Math.floor(Ш * ТЧ);
-  холст.height = Math.floor(В * ТЧ);
-  холст.style.width  = Ш + 'px';
-  холст.style.height = В + 'px';
+const offCanvas = document.createElement('canvas');
+const offCtx = offCanvas.getContext('2d', { alpha: false });
+
+let Ш_ЭКРАНА = 0, В_ЭКРАНА = 0;
+
+function настроитьРазмер() {
+  Ш_ЭКРАНА = window.innerWidth;
+  В_ЭКРАНА = window.innerHeight;
+
+  холст.width  = Ш_ЭКРАНА;
+  холст.height = В_ЭКРАНА;
+  холст.style.width  = Ш_ЭКРАНА + 'px';
+  холст.style.height = В_ЭКРАНА + 'px';
+
+  /* Внутреннее разрешение — фиксированной высоты, ширина по пропорции */
+  const пропорция = Ш_ЭКРАНА / В_ЭКРАНА;
+  ВЫСОТА_БУФ = 220;
+  ШИРИНА_БУФ = Math.floor(ВЫСОТА_БУФ * пропорция);
+  if (ШИРИНА_БУФ > 480) ШИРИНА_БУФ = 480;
+  if (ШИРИНА_БУФ < 160) ШИРИНА_БУФ = 160;
+
+  offCanvas.width  = ШИРИНА_БУФ;
+  offCanvas.height = ВЫСОТА_БУФ;
+
+  imageData = offCtx.createImageData(ШИРИНА_БУФ, ВЫСОТА_БУФ);
+  буфер = new Uint32Array(imageData.data.buffer);
 }
 
-window.addEventListener('resize', обновитьРазмер);
-window.addEventListener('orientationchange', () => setTimeout(обновитьРазмер, 120));
-обновитьРазмер();
-
-/* ---------- ОПРЕДЕЛЕНИЕ ТАЧ-УСТРОЙСТВА ---------- */
-const ЭТО_ТАЧ = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-
-/* ---------- МАТЕМАТИЧЕСКИЕ УТИЛИТЫ ---------- */
-const ДВА_ПИ  = Math.PI * 2;
-const случ    = (а, б) => а + Math.random() * (б - а);
-const огр     = (v, а, б) => v < а ? а : (v > б ? б : v);
-const раст    = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
-
-/* Скруглённый прямоугольник */
-function скругПрямоуг(c, x, y, w, h, r){
-  r = Math.min(r, w * 0.5, h * 0.5);
-  c.beginPath();
-  c.moveTo(x + r, y);
-  c.arcTo(x + w, y,     x + w, y + h, r);
-  c.arcTo(x + w, y + h, x,     y + h, r);
-  c.arcTo(x,     y + h, x,     y,     r);
-  c.arcTo(x,     y,     x + w, y,     r);
-  c.closePath();
-}
+window.addEventListener('resize', настроитьРазмер);
+window.addEventListener('orientationchange', () => setTimeout(настроитьРазмер, 150));
+настроитьРазмер();
 
 /* ==========================================================
-   ЗВУК (WebAudio, без файлов)
+   3. УТИЛИТЫ
    ========================================================== */
-let ЗВУК = null, шумовойБуфер = null;
+const ДВА_ПИ = Math.PI * 2;
+const случ   = (a, b) => a + Math.random() * (b - a);
+const огр    = (v, a, b) => v < a ? a : (v > b ? b : v);
+const раст   = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
 
-function включитьЗвук(){
-  if (ЗВУК) return;
-  try{
-    ЗВУК = new (window.AudioContext || window.webkitAudioContext)();
-    const длина = Math.floor(ЗВУК.sampleRate * 0.5);
-    шумовойБуфер = ЗВУК.createBuffer(1, длина, ЗВУК.sampleRate);
-    const данные = шумовойБуфер.getChannelData(0);
-    for (let i = 0; i < длина; i++) данные[i] = Math.random() * 2 - 1;
-  }catch(e){ ЗВУК = null; }
-}
-
-/* Звук выстрела */
-function звукВыстрел(громкость){
-  if (!ЗВУК) return;
-  const t = ЗВУК.currentTime;
-
-  const источник = ЗВУК.createBufferSource();
-  источник.buffer = шумовойБуфер;
-  источник.playbackRate.value = 1.6;
-
-  const фильтр = ЗВУК.createBiquadFilter();
-  фильтр.type = 'lowpass';
-  фильтр.frequency.setValueAtTime(2400, t);
-  фильтр.frequency.exponentialRampToValueAtTime(180, t + 0.13);
-
-  const громк = ЗВУК.createGain();
-  громк.gain.setValueAtTime(громкость, t);
-  громк.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
-
-  источник.connect(фильтр); фильтр.connect(громк); громк.connect(ЗВУК.destination);
-  источник.start(t); источник.stop(t + 0.22);
-
-  /* Низкий «бум» */
-  const осц = ЗВУК.createOscillator();
-  осц.type = 'sine';
-  осц.frequency.setValueAtTime(190, t);
-  осц.frequency.exponentialRampToValueAtTime(45, t + 0.1);
-  const ог = ЗВУК.createGain();
-  ог.gain.setValueAtTime(громкость * 1.1, t);
-  ог.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
-  осц.connect(ог); ог.connect(ЗВУК.destination);
-  осц.start(t); осц.stop(t + 0.18);
-}
-
-/* Звук попадания */
-function звукПопадание(){
-  if (!ЗВУК) return;
-  const t = ЗВУК.currentTime;
-  const источник = ЗВУК.createBufferSource();
-  источник.buffer = шумовойБуфер;
-  источник.playbackRate.value = 0.5;
-  const фильтр = ЗВУК.createBiquadFilter();
-  фильтр.type = 'lowpass'; фильтр.frequency.value = 500;
-  const громк = ЗВУК.createGain();
-  громк.gain.setValueAtTime(0.25, t);
-  громк.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
-  источник.connect(фильтр); фильтр.connect(громк); громк.connect(ЗВУК.destination);
-  источник.start(t); источник.stop(t + 0.3);
-}
-
-/* Короткий щелчок */
-function звукЩелчок(частота, громкость, длит){
-  if (!ЗВУК) return;
-  const t = ЗВУК.currentTime;
-  const осц = ЗВУК.createOscillator();
-  осц.type = 'square';
-  осц.frequency.setValueAtTime(частота, t);
-  const громк = ЗВУК.createGain();
-  громк.gain.setValueAtTime(громкость, t);
-  громк.gain.exponentialRampToValueAtTime(0.0001, t + длит);
-  осц.connect(громк); громк.connect(ЗВУК.destination);
-  осц.start(t); осц.stop(t + длит + 0.02);
-}
-
-/* Звук перезарядки */
-function звукПерезарядка(){
-  звукЩелчок(320, 0.10, 0.06);
-  setTimeout(() => звукЩелчок(220, 0.10, 0.07), 160);
-}
-
-/* Звук Меткого глаза */
-function звукМеткийГлаз(){
-  if (!ЗВУК) return;
-  const t = ЗВУК.currentTime;
-  const осц = ЗВУК.createOscillator();
-  осц.type = 'sine';
-  осц.frequency.setValueAtTime(900, t);
-  осц.frequency.exponentialRampToValueAtTime(180, t + 0.6);
-  const громк = ЗВУК.createGain();
-  громк.gain.setValueAtTime(0.14, t);
-  громк.gain.exponentialRampToValueAtTime(0.0001, t + 0.65);
-  осц.connect(громк); громк.connect(ЗВУК.destination);
-  осц.start(t); осц.stop(t + 0.7);
-}
-
-/* Свист коня */
-function звукСвист(){
-  if (!ЗВУК) return;
-  const t = ЗВУК.currentTime;
-  const осц = ЗВУК.createOscillator();
-  осц.type = 'sine';
-  осц.frequency.setValueAtTime(700, t);
-  осц.frequency.exponentialRampToValueAtTime(1500, t + 0.12);
-  осц.frequency.exponentialRampToValueAtTime(600, t + 0.3);
-  const громк = ЗВУК.createGain();
-  громк.gain.setValueAtTime(0.10, t);
-  громк.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-  осц.connect(громк); громк.connect(ЗВУК.destination);
-  осц.start(t); осц.stop(t + 0.4);
+/* Упаковка цвета в uint32 (формат ABGR, little-endian) */
+function цвет(r, g, b, a = 255) {
+  return ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
 }
 
 /* ==========================================================
-   ВВОД: КЛАВИАТУРА И МЫШЬ
+   4. ПРОЦЕДУРНЫЕ ТЕКСТУРЫ
+   Все текстуры рисуются на canvas и извлекаются в Uint32Array
+   ========================================================== */
+function извлечьТекстуру(painter) {
+  const c = document.createElement('canvas');
+  c.width = c.height = РАЗМЕР_ТЕКСТУРЫ;
+  const cx = c.getContext('2d');
+  painter(cx, РАЗМЕР_ТЕКСТУРЫ);
+  const img = cx.getImageData(0, 0, РАЗМЕР_ТЕКСТУРЫ, РАЗМЕР_ТЕКСТУРЫ);
+  const out = new Uint32Array(РАЗМЕР_ТЕКСТУРЫ * РАЗМЕР_ТЕКСТУРЫ);
+  for (let i = 0; i < out.length; i++) {
+    const r = img.data[i * 4];
+    const g = img.data[i * 4 + 1];
+    const b = img.data[i * 4 + 2];
+    const a = img.data[i * 4 + 3];
+    out[i] = ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
+  }
+  return out;
+}
+
+/* ---------- Текстура: деревянная стена ---------- */
+function текстураДерево(cx, s) {
+  cx.fillStyle = '#7a4f2a';
+  cx.fillRect(0, 0, s, s);
+
+  const полос = 8;
+  const высота = s / полос;
+
+  for (let i = 0; i < полос; i++) {
+    cx.fillStyle = (i % 2 === 0) ? '#6d4423' : '#82522c';
+    cx.fillRect(0, i * высота, s, высота - 1);
+
+    /* Волокна */
+    for (let j = 0; j < 30; j++) {
+      const яркость = Math.random();
+      if (яркость < 0.5) cx.fillStyle = 'rgba(50,30,15,' + (0.15 + Math.random() * 0.25) + ')';
+      else cx.fillStyle = 'rgba(160,110,60,' + (0.10 + Math.random() * 0.20) + ')';
+      cx.fillRect(Math.random() * s, i * высота + Math.random() * высота, 2 + Math.random() * 4, 1);
+    }
+
+    /* Гвозди */
+    if (i % 2 === 0) {
+      cx.fillStyle = '#3a2412';
+      cx.fillRect(s * 0.1, i * высота + высота / 2, 1.5, 1.5);
+      cx.fillRect(s * 0.9, i * высота + высота / 2, 1.5, 1.5);
+    }
+  }
+
+  /* Вертикальные тёмные стыки */
+  cx.strokeStyle = 'rgba(30,18,8,0.75)';
+  cx.lineWidth = 1;
+  for (let i = 1; i < полос; i++) {
+    cx.beginPath();
+    cx.moveTo(0, i * высота);
+    cx.lineTo(s, i * высота);
+    cx.stroke();
+  }
+}
+
+/* ---------- Текстура: кирпич ---------- */
+function текстураКирпич(cx, s) {
+  cx.fillStyle = '#6a3a2a';
+  cx.fillRect(0, 0, s, s);
+
+  const р = 4, к = 8; /* 4 ряда по 8 кирпичей */
+  const вК = s / р, шК = s / к;
+  const зазор = 1.5;
+
+  for (let ряд = 0; ряд < р; ряд++) {
+    const смещение = (ряд % 2) ? шК / 2 : 0;
+    for (let к2 = -1; к2 < к + 1; к2++) {
+      const x = к2 * шК + смещение + зазор;
+      const y = ряд * вК + зазор;
+      const w = шК - зазор * 2;
+      const h = вК - зазор * 2;
+
+      const оттенок = 0.85 + Math.random() * 0.3;
+      const r0 = Math.floor(140 * оттенок);
+      const g0 = Math.floor(75 * оттенок);
+      const b0 = Math.floor(55 * оттенок);
+      cx.fillStyle = 'rgb(' + r0 + ',' + g0 + ',' + b0 + ')';
+      cx.fillRect(x, y, w, h);
+
+      /* Мелкие трещинки */
+      if (Math.random() < 0.4) {
+        cx.strokeStyle = 'rgba(60,30,20,0.6)';
+        cx.lineWidth = 0.7;
+        cx.beginPath();
+        cx.moveTo(x + Math.random() * w, y);
+        cx.lineTo(x + Math.random() * w, y + h);
+        cx.stroke();
+      }
+    }
+  }
+}
+
+/* ---------- Текстура: каменная стена ---------- */
+function текстураКамень(cx, s) {
+  cx.fillStyle = '#6a625a';
+  cx.fillRect(0, 0, s, s);
+
+  /* Крупные каменные блоки */
+  for (let i = 0; i < 40; i++) {
+    const x = Math.random() * s;
+    const y = Math.random() * s;
+    const w = 6 + Math.random() * 14;
+    const h = 5 + Math.random() * 10;
+    const отт = 0.75 + Math.random() * 0.5;
+    const r0 = Math.floor(120 * отт);
+    const g0 = Math.floor(115 * отт);
+    const b0 = Math.floor(108 * отт);
+    cx.fillStyle = 'rgb(' + r0 + ',' + g0 + ',' + b0 + ')';
+    cx.beginPath();
+    cx.ellipse(x, y, w, h, Math.random() * Math.PI, 0, ДВА_ПИ);
+    cx.fill();
+    cx.strokeStyle = 'rgba(40,35,30,0.5)';
+    cx.lineWidth = 0.8;
+    cx.stroke();
+  }
+
+  /* Мелкие крупинки */
+  for (let i = 0; i < 300; i++) {
+    cx.fillStyle = 'rgba(' + Math.floor(Math.random() * 60) + ',' + Math.floor(Math.random() * 60) + ',' + Math.floor(Math.random() * 60) + ',0.35)';
+    cx.fillRect(Math.random() * s, Math.random() * s, 1, 1);
+  }
+}
+
+/* ---------- Текстура: дверь ---------- */
+function текстураДверь(cx, s) {
+  /* Деревянная основа */
+  cx.fillStyle = '#5a3a20';
+  cx.fillRect(0, 0, s, s);
+
+  /* Рамка */
+  cx.fillStyle = '#3a2412';
+  cx.fillRect(0, 0, s, 4);
+  cx.fillRect(0, s - 4, s, 4);
+  cx.fillRect(0, 0, 4, s);
+  cx.fillRect(s - 4, 0, 4, s);
+  cx.fillRect(0, s / 2 - 2, s, 4);
+
+  /* Панели */
+  cx.fillStyle = '#6a4525';
+  cx.fillRect(8, 8, s - 16, s / 2 - 16);
+  cx.fillRect(8, s / 2 + 8, s - 16, s / 2 - 16);
+
+  cx.strokeStyle = 'rgba(0,0,0,0.5)';
+  cx.lineWidth = 1.5;
+  cx.strokeRect(8, 8, s - 16, s / 2 - 16);
+  cx.strokeRect(8, s / 2 + 8, s - 16, s / 2 - 16);
+
+  /* Ручка */
+  cx.fillStyle = '#c9a03a';
+  cx.beginPath();
+  cx.arc(s - 12, s / 2, 3, 0, ДВА_ПИ);
+  cx.fill();
+  cx.strokeStyle = '#7a5a20';
+  cx.lineWidth = 1;
+  cx.stroke();
+}
+
+/* ---------- Текстура: песок (пол) ---------- */
+function текстураПесок(cx, s) {
+  cx.fillStyle = '#c99a52';
+  cx.fillRect(0, 0, s, s);
+
+  /* Крапинки */
+  for (let i = 0; i < 900; i++) {
+    const отт = Math.random();
+    let r0, g0, b0;
+    if (отт < 0.4) { r0 = 180; g0 = 130; b0 = 70; }
+    else if (отт < 0.75) { r0 = 220; g0 = 170; b0 = 100; }
+    else { r0 = 140; g0 = 100; b0 = 55; }
+    cx.fillStyle = 'rgba(' + r0 + ',' + g0 + ',' + b0 + ',' + (0.15 + Math.random() * 0.4) + ')';
+    cx.fillRect(Math.random() * s, Math.random() * s, 1 + Math.random() * 2, 1);
+  }
+
+  /* Камешки */
+  for (let i = 0; i < 40; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    const r = 1 + Math.random() * 2;
+    cx.fillStyle = 'rgba(90,70,45,0.6)';
+    cx.beginPath();
+    cx.arc(x, y, r, 0, ДВА_ПИ);
+    cx.fill();
+    cx.fillStyle = 'rgba(220,190,140,0.4)';
+    cx.beginPath();
+    cx.arc(x - 0.5, y - 0.5, r * 0.5, 0, ДВА_ПИ);
+    cx.fill();
+  }
+
+  /* Травинки */
+  for (let i = 0; i < 20; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    cx.strokeStyle = 'rgba(110,120,55,0.5)';
+    cx.lineWidth = 1;
+    cx.beginPath();
+    cx.moveTo(x, y);
+    cx.lineTo(x + (Math.random() - 0.5) * 3, y - 2 - Math.random() * 3);
+    cx.stroke();
+  }
+}
+
+/* ---------- Текстура: небо (используем как вертикальный градиент) ---------- */
+/* Небо мы будем рисовать напрямую в буфер градиентом — не текстурой */
+
+/* ---------- Спрайт: ковбой-враг (с альфа-каналом) ---------- */
+function спрайтКовбой(cx, s) {
+  /* Фон прозрачный */
+  cx.clearRect(0, 0, s, s);
+
+  const центр = s / 2;
+
+  /* Ноги */
+  cx.fillStyle = '#2a1c12';
+  cx.fillRect(центр - 8, s * 0.72, 6, s * 0.26);
+  cx.fillRect(центр + 2, s * 0.72, 6, s * 0.26);
+
+  /* Ботинки */
+  cx.fillStyle = '#1a1008';
+  cx.fillRect(центр - 9, s * 0.95, 8, s * 0.04);
+  cx.fillRect(центр + 1, s * 0.95, 8, s * 0.04);
+
+  /* Пальто */
+  cx.fillStyle = '#6a3020';
+  cx.beginPath();
+  cx.moveTo(центр - 12, s * 0.42);
+  cx.lineTo(центр + 12, s * 0.42);
+  cx.lineTo(центр + 10, s * 0.75);
+  cx.lineTo(центр - 10, s * 0.75);
+  cx.closePath();
+  cx.fill();
+
+  /* Тёмная обводка пальто */
+  cx.strokeStyle = '#3a1808';
+  cx.lineWidth = 1;
+  cx.stroke();
+
+  /* Рубашка / жилет */
+  cx.fillStyle = '#7a3020';
+  cx.beginPath();
+  cx.moveTo(центр - 7, s * 0.42);
+  cx.lineTo(центр + 7, s * 0.42);
+  cx.lineTo(центр + 6, s * 0.60);
+  cx.lineTo(центр - 6, s * 0.60);
+  cx.closePath();
+  cx.fill();
+
+  /* Пуговицы */
+  cx.fillStyle = '#d9b23a';
+  for (let i = 0; i < 3; i++) {
+    cx.beginPath();
+    cx.arc(центр, s * 0.45 + i * s * 0.05, 1.2, 0, ДВА_ПИ);
+    cx.fill();
+  }
+
+  /* Пояс */
+  cx.fillStyle = '#3a2010';
+  cx.fillRect(центр - 12, s * 0.62, 24, s * 0.05);
+
+  /* Пряжка */
+  cx.fillStyle = '#d9b23a';
+  cx.fillRect(центр - 2, s * 0.625, 4, 3);
+
+  /* Руки */
+  cx.fillStyle = '#5a2010';
+  cx.fillRect(центр - 15, s * 0.44, 4, s * 0.22);
+  cx.fillRect(центр + 11, s * 0.44, 4, s * 0.22);
+
+  /* Кисти рук */
+  cx.fillStyle = '#d9a679';
+  cx.fillRect(центр - 15, s * 0.63, 4, 4);
+  cx.fillRect(центр + 11, s * 0.63, 4, 4);
+
+  /* Револьвер в правой руке */
+  cx.fillStyle = '#1a1a22';
+  cx.fillRect(центр + 13, s * 0.58, 8, 3);
+
+  /* Голова — шея */
+  cx.fillStyle = '#c08858';
+  cx.fillRect(центр - 3, s * 0.38, 6, s * 0.05);
+
+  /* Голова — лицо */
+  cx.fillStyle = '#d9a679';
+  cx.beginPath();
+  cx.arc(центр, s * 0.32, 7, 0, ДВА_ПИ);
+  cx.fill();
+
+  /* Затенение лица */
+  cx.fillStyle = 'rgba(0,0,0,0.20)';
+  cx.beginPath();
+  cx.arc(центр + 2, s * 0.32, 5, 0, ДВА_ПИ);
+  cx.fill();
+
+  /* Глаза */
+  cx.fillStyle = '#1a0a05';
+  cx.fillRect(центр - 3, s * 0.31, 1.5, 1.5);
+  cx.fillRect(центр + 1.5, s * 0.31, 1.5, 1.5);
+
+  /* Бандана на лице (у врага) */
+  cx.fillStyle = '#b02020';
+  cx.fillRect(центр - 7, s * 0.33, 14, 3);
+  cx.fillStyle = '#8a1818';
+  cx.fillRect(центр - 7, s * 0.345, 14, 1);
+
+  /* Шляпа — поля */
+  cx.fillStyle = '#2a1a10';
+  cx.beginPath();
+  cx.ellipse(центр, s * 0.27, 12, 4, 0, 0, ДВА_ПИ);
+  cx.fill();
+
+  /* Шляпа — тулья */
+  cx.fillStyle = '#3a2418';
+  cx.beginPath();
+  cx.ellipse(центр, s * 0.24, 7, 5, 0, 0, ДВА_ПИ);
+  cx.fill();
+
+  /* Лента шляпы */
+  cx.fillStyle = '#1a0a05';
+  cx.beginPath();
+  cx.ellipse(центр, s * 0.265, 7, 1.6, 0, 0, ДВА_ПИ);
+  cx.fill();
+
+  /* Блик на тулье */
+  cx.fillStyle = 'rgba(255,220,160,0.20)';
+  cx.beginPath();
+  cx.ellipse(центр - 2, s * 0.22, 3, 2, 0, 0, ДВА_ПИ);
+  cx.fill();
+}
+
+/* ---------- Спрайт: кактус ---------- */
+function спрайтКактус(cx, s) {
+  cx.clearRect(0, 0, s, s);
+  const центр = s / 2;
+
+  /* Основной ствол */
+  cx.fillStyle = '#4a7a3a';
+  cx.fillRect(центр - 6, s * 0.30, 12, s * 0.68);
+
+  /* Левая рука */
+  cx.fillRect(центр - 14, s * 0.45, 8, 4);
+  cx.fillRect(центр - 14, s * 0.35, 4, s * 0.15);
+
+  /* Правая рука */
+  cx.fillRect(центр + 6, s * 0.40, 8, 4);
+  cx.fillRect(центр + 10, s * 0.25, 4, s * 0.20);
+
+  /* Тёмная обводка */
+  cx.strokeStyle = '#2f5226';
+  cx.lineWidth = 1.5;
+  cx.strokeRect(центр - 6, s * 0.30, 12, s * 0.68);
+
+  /* Иголки */
+  cx.strokeStyle = 'rgba(200,230,160,0.7)';
+  cx.lineWidth = 0.8;
+  for (let i = 0; i < 25; i++) {
+    const x = центр + (Math.random() - 0.5) * 12;
+    const y = s * 0.32 + Math.random() * s * 0.62;
+    cx.beginPath();
+    cx.moveTo(x, y);
+    cx.lineTo(x + (Math.random() - 0.5) * 3, y - 1 - Math.random() * 2);
+    cx.stroke();
+  }
+
+  /* Блик */
+  cx.fillStyle = 'rgba(255,255,255,0.15)';
+  cx.fillRect(центр - 4, s * 0.35, 3, s * 0.6);
+}
+
+/* ---------- Спрайт: бочка ---------- */
+function спрайтБочка(cx, s) {
+  cx.clearRect(0, 0, s, s);
+
+  const центрX = s / 2;
+  const верх = s * 0.30;
+  const низ  = s * 0.95;
+
+  /* Бочка */
+  cx.fillStyle = '#8a5a30';
+  cx.beginPath();
+  cx.moveTo(центрX - 12, верх);
+  cx.lineTo(центрX + 12, верх);
+  cx.lineTo(центрX + 14, низ);
+  cx.lineTo(центрX - 14, низ);
+  cx.closePath();
+  cx.fill();
+
+  /* Вертикальные тени */
+  const гр = cx.createLinearGradient(центрX - 14, 0, центрX + 14, 0);
+  гр.addColorStop(0, 'rgba(0,0,0,0.35)');
+  гр.addColorStop(0.4, 'rgba(255,220,160,0.15)');
+  гр.addColorStop(1, 'rgba(0,0,0,0.35)');
+  cx.fillStyle = гр;
+  cx.beginPath();
+  cx.moveTo(центрX - 12, верх);
+  cx.lineTo(центрX + 12, верх);
+  cx.lineTo(центрX + 14, низ);
+  cx.lineTo(центрX - 14, низ);
+  cx.closePath();
+  cx.fill();
+
+  /* Обручи */
+  cx.strokeStyle = '#3a2410';
+  cx.lineWidth = 2.5;
+  for (const y of [верх + 4, s * 0.62, низ - 4]) {
+    cx.beginPath();
+    cx.moveTo(центрX - 13, y);
+    cx.lineTo(центрX + 13, y);
+    cx.stroke();
+  }
+
+  /* Крышка (эллипс) */
+  cx.fillStyle = '#a06c3a';
+  cx.beginPath();
+  cx.ellipse(центрX, верх, 12, 3.5, 0, 0, ДВА_ПИ);
+  cx.fill();
+  cx.strokeStyle = '#4a2f18';
+  cx.lineWidth = 1.2;
+  cx.stroke();
+}
+
+/* ---------- Строим все текстуры ---------- */
+const ТЕКСТУРЫ = [];
+ТЕКСТУРЫ[1] = извлечьТекстуру(текстураДерево);
+ТЕКСТУРЫ[2] = извлечьТекстуру(текстураКирпич);
+ТЕКСТУРЫ[3] = извлечьТекстуру(текстураКамень);
+ТЕКСТУРЫ[4] = извлечьТекстуру(текстураДверь);
+
+const ТЕКСТУРА_ПОЛА = извлечьТекстуру(текстураПесок);
+
+const СПРАЙТ_КОВБОЙ = извлечьТекстуру(спрайтКовбой);
+const СПРАЙТ_КАКТУС  = извлечьТекстуру(спрайтКактус);
+const СПРАЙТ_БОЧКА   = извлечьТекстуру(спрайтБочка);
+
+/* ==========================================================
+   5. КАРТА МИРА (вестерн-городок)
+   ========================================================== */
+function построитьКарту() {
+  КАРТА.fill(0);
+
+  /* Периметр — деревянный забор */
+  for (let x = 0; x < РАЗМЕР_КАРТЫ; x++) {
+    КАРТА[x] = 1;
+    КАРТА[(РАЗМЕР_КАРТЫ - 1) * РАЗМЕР_КАРТЫ + x] = 1;
+  }
+  for (let y = 0; y < РАЗМЕР_КАРТЫ; y++) {
+    КАРТА[y * РАЗМЕР_КАРТЫ] = 1;
+    КАРТА[y * РАЗМЕР_КАРТЫ + РАЗМЕР_КАРТЫ - 1] = 1;
+  }
+
+  /* Вспомогательная функция установки прямоугольника стен */
+  function стена(x, y, w, h, тип) {
+    for (let j = y; j < y + h; j++) {
+      for (let i = x; i < x + w; i++) {
+        if (i > 0 && i < РАЗМЕР_КАРТЫ - 1 && j > 0 && j < РАЗМЕР_КАРТЫ - 1) {
+          КАРТА[j * РАЗМЕР_КАРТЫ + i] = тип;
+        }
+      }
+    }
+  }
+
+  /* Пустое пространство внутри */
+  function очистить(x, y, w, h) {
+    for (let j = y; j < y + h; j++) {
+      for (let i = x; i < x + w; i++) {
+        if (i > 0 && i < РАЗМЕР_КАРТЫ - 1 && j > 0 && j < РАЗМЕР_КАРТЫ - 1) {
+          КАРТА[j * РАЗМЕР_КАРТЫ + i] = 0;
+        }
+      }
+    }
+  }
+
+  /* --- Дома --- */
+
+  /* Дом 1: деревянный, левый верх */
+  стена(3, 3, 6, 5, 1);
+  очистить(4, 4, 4, 3);
+  КАРТА[5 * РАЗМЕР_КАРТЫ + 8] = 4; /* дверь */
+
+  /* Дом 2: кирпичный, правый верх */
+  стена(22, 3, 6, 5, 2);
+  очистить(23, 4, 4, 3);
+  КАРТА[5 * РАЗМЕР_КАРТЫ + 22] = 4;
+
+  /* Дом 3: каменный, левый низ */
+  стена(3, 22, 6, 6, 3);
+  очистить(4, 23, 4, 4);
+  КАРТА[22 * РАЗМЕР_КАРТЫ + 5] = 4;
+
+  /* Дом 4: кирпичный, правый низ */
+  стена(22, 22, 6, 6, 2);
+  очистить(23, 23, 4, 4);
+  КАРТА[22 * РАЗМЕР_КАРТЫ + 25] = 4;
+
+  /* Дом 5: центральный салун — большой деревянный */
+  стена(12, 12, 8, 8, 1);
+  очистить(13, 13, 6, 6);
+  /* Двойная дверь салуна */
+  КАРТА[19 * РАЗМЕР_КАРТЫ + 15] = 4;
+  КАРТА[19 * РАЗМЕР_КАРТЫ + 16] = 4;
+
+  /* Одинокие стены/навесы для укрытия */
+  стена(18, 5, 1, 3, 1);
+  стена(11, 24, 4, 1, 3);
+  стена(26, 12, 1, 5, 2);
+
+  /* Немного разбросанных одиночных блоков */
+  стена(8, 15, 1, 1, 3);
+  стена(23, 15, 1, 1, 3);
+  стена(15, 8, 1, 1, 1);
+  стена(16, 24, 1, 1, 1);
+
+  /* Пара колодцев/столбов в центре улицы */
+  стена(10, 10, 1, 1, 3);
+  стена(21, 21, 1, 1, 3);
+  стена(10, 21, 1, 1, 3);
+  стена(21, 10, 1, 1, 3);
+}
+
+построитьКарту();
+
+/* Проверка — является ли клетка стеной */
+function этоСтена(x, y) {
+  if (x < 0 || y < 0 || x >= РАЗМЕР_КАРТЫ || y >= РАЗМЕР_КАРТЫ) return true;
+  return КАРТА[Math.floor(y) * РАЗМЕР_КАРТЫ + Math.floor(x)] > 0;
+}
+
+/* ==========================================================
+   6. ИГРОК И СОСТОЯНИЕ
+   ========================================================== */
+const игрок = {
+  x: 16, y: 24,
+  угол: -Math.PI / 2,
+  хп: 100, максХп: 100,
+  патроны: 6, максПатронов: 6, запас: 42,
+  откатВыстрела: 0,
+  перезарядка: 0,
+  меткийГлаз: 1,
+  мгАктивен: false,
+  тряска: 0,
+  вспышкаСтвола: 0
+};
+
+let состояние = 'меню'; /* меню | игра | конец */
+let время = 0;
+let счёт = 0;
+let убийств = 0;
+let таймерСпавна = 0;
+let таймерПодсказки = 3;
+
+/* Спрайты (враги + объекты) */
+let спрайты = [];
+
+/* Пули игрока (хитскан) и урон — простая логика */
+let эффекты = []; /* частицы попадания */
+
+/* ==========================================================
+   7. ВВОД: КЛАВИАТУРА И МЫШЬ
    ========================================================== */
 const клавиши = Object.create(null);
-const мышь = { x: 0, y: 0, нажата: false, есть: false };
+const мышь = { dx: 0, нажата: false };
+let указательЗахвачен = false;
 
 window.addEventListener('keydown', e => {
   клавиши[e.code] = true;
-
-  /* Отменяем прокрутку стрелками и пробелом */
-  if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
 
   if (e.code === 'KeyQ') переключитьМеткийГлаз();
-  if (e.code === 'KeyE') переключитьКоня();
-  if (e.code === 'KeyR'){
+  if (e.code === 'KeyR') {
     if (состояние === 'конец') начатьИгру();
     else начатьПерезарядку();
   }
@@ -248,168 +717,176 @@ window.addEventListener('keydown', e => {
 
 window.addEventListener('keyup', e => { клавиши[e.code] = false; });
 
-холст.addEventListener('mousemove', e => {
-  мышь.x = e.clientX;
-  мышь.y = e.clientY;
-  мышь.есть = true;
+холст.addEventListener('click', () => {
+  if (состояние === 'меню' || состояние === 'конец') {
+    начатьИгру();
+    return;
+  }
+  if (!ЭТО_ТАЧ && !указательЗахвачен) {
+    холст.requestPointerLock();
+  }
+});
+
+document.addEventListener('pointerlockchange', () => {
+  указательЗахвачен = document.pointerLockElement === холст;
+});
+
+document.addEventListener('mousemove', e => {
+  if (указательЗахвачен) {
+    мышь.dx += e.movementX;
+  }
 });
 
 холст.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
-  включитьЗвук();
-  if (ЗВУК && ЗВУК.state === 'suspended') ЗВУК.resume();
-  if (состояние === 'меню' || состояние === 'конец'){ начатьИгру(); return; }
-  мышь.нажата = true;
+  if (состояние === 'игра') мышь.нажата = true;
 });
 
-window.addEventListener('mouseup', e => { if (e.button === 0) мышь.нажата = false; });
+window.addEventListener('mouseup', e => {
+  if (e.button === 0) мышь.нажата = false;
+});
+
 холст.addEventListener('contextmenu', e => e.preventDefault());
 
 /* ==========================================================
-   ВВОД: СЕНСОРНЫЙ ЭКРАН (iPad)
+   8. ВВОД: ТАЧ (iPad)
    ========================================================== */
+const ЭТО_ТАЧ = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 
-/* Левый стик — движение, правый стик — прицел и авто-огонь */
-const стикДвижение = { активен: false, id: null, ox: 0, oy: 0, x: 0, y: 0, dx: 0, dy: 0 };
-const стикПрицел   = { активен: false, id: null, ox: 0, oy: 0, x: 0, y: 0, dx: 0, dy: 0 };
+/* Левый стик — движение */
+const левыйСтик = { активен: false, id: null, ox: 0, oy: 0, x: 0, y: 0, dx: 0, dy: 0 };
+/* Правый — обзор + авто-огонь при удержании */
+const правыйСтик = { активен: false, id: null, ox: 0, oy: 0, x: 0, y: 0, dx: 0, dy: 0, тапТаймер: 0, стрелял: false };
 
-const РАДИУС_СТИКА = 68;    // максимальный радиус хода
-const МЁРТВАЯ_ЗОНА = 0.16;  // мёртвая зона
+const РАДИУС_СТИКА = 70;
+const МЁРТВАЯ_ЗОНА = 0.14;
 
-/* Кнопки действий справа */
-const кнопкиДействий = [
-  { ключ: 'перезарядка', метка: 'ПЕР',  x: () => Ш - 58, y: () => 232, r: 30, цвет: '#c9a03a', нажата: false, tid: null },
-  { ключ: 'меткийГлаз',  метка: 'ГЛАЗ', x: () => Ш - 58, y: () => 308, r: 30, цвет: '#d8a83a', нажата: false, tid: null },
-  { ключ: 'конь',        метка: 'КОНЬ', x: () => Ш - 58, y: () => 384, r: 30, цвет: '#8a5a30', нажата: false, tid: null }
+/* Кнопки действий */
+const кнопки = [
+  { ключ: 'перезарядка', метка: 'ПЕР', x: () => Ш_ЭКРАНА - 60, y: () => 260, r: 32, цвет: '#c9a03a' },
+  { ключ: 'меткийГлаз',  метка: 'ГЛАЗ', x: () => Ш_ЭКРАНА - 60, y: () => 340, r: 32, цвет: '#d8a83a' },
+  { ключ: 'бег',         метка: 'БЕГ',  x: () => 60,           y: () => В_ЭКРАНА - 60, r: 32, цвет: '#8a5a30' }
 ];
 
-function попаданиеВКнопку(x, y){
-  for (const к of кнопкиДействий){
-    if (раст(x, y, к.x(), к.y()) < к.r + 16) return к;
+let бег = false;
+
+function попаданиеВКнопку(x, y) {
+  for (const к of кнопки) {
+    if (раст(x, y, к.x(), к.y()) < к.r + 18) return к;
   }
   return null;
 }
 
-function нажатьКнопку(к){
-  if (к.ключ === 'перезарядка') начатьПерезарядку();
-  if (к.ключ === 'меткийГлаз')  переключитьМеткийГлаз();
-  if (к.ключ === 'конь')        переключитьКоня();
-}
-
-function обработатьКосStart(e){
-  for (let i = 0; i < e.changedTouches.length; i++){
+function обработатьКосStart(e) {
+  for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i];
     const x = t.clientX, y = t.clientY;
 
-    /* Кнопки действий — в приоритете */
     const к = попаданиеВКнопку(x, y);
-    if (к){
-      к.нажата = true;
+    if (к) {
       к.tid = t.identifier;
       нажатьКнопку(к);
       continue;
     }
 
     /* Левая половина — движение */
-    if (x < Ш * 0.5 && !стикДвижение.активен){
-      стикДвижение.активен = true;
-      стикДвижение.id = t.identifier;
-      стикДвижение.ox = x; стикДвижение.oy = y;
-      стикДвижение.x  = x; стикДвижение.y  = y;
-      стикДвижение.dx = 0; стикДвижение.dy = 0;
+    if (x < Ш_ЭКРАНА * 0.5 && !левыйСтик.активен) {
+      левыйСтик.активен = true;
+      левыйСтик.id = t.identifier;
+      левыйСтик.ox = x; левыйСтик.oy = y;
+      левыйСтик.x  = x; левыйСтик.y  = y;
+      левыйСтик.dx = 0; левыйСтик.dy = 0;
       continue;
     }
 
-    /* Правая половина — прицел + огонь */
-    if (x >= Ш * 0.5 && !стикПрицел.активен){
-      стикПрицел.активен = true;
-      стикПрицел.id = t.identifier;
-      стикПрицел.ox = x; стикПрицел.oy = y;
-      стикПрицел.x  = x; стикПрицел.y  = y;
-      стикПрицел.dx = 0; стикПрицел.dy = 0;
+    /* Правая половина — обзор/огонь */
+    if (x >= Ш_ЭКРАНА * 0.5 && !правыйСтик.активен) {
+      правыйСтик.активен = true;
+      правыйСтик.id = t.identifier;
+      правыйСтик.ox = x; правыйСтик.oy = y;
+      правыйСтик.x  = x; правыйСтик.y  = y;
+      правыйСтик.dx = 0; правыйСтик.dy = 0;
+      правыйСтик.тапТаймер = performance.now();
+      правыйСтик.стрелял = false;
       continue;
     }
   }
 }
 
-function обработатьКосMove(e){
-  for (let i = 0; i < e.changedTouches.length; i++){
+function обработатьКосMove(e) {
+  for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i];
     const x = t.clientX, y = t.clientY;
 
-    /* Левый стик */
-    if (стикДвижение.активен && t.identifier === стикДвижение.id){
-      стикДвижение.x = x; стикДвижение.y = y;
-      let dx = x - стикДвижение.ox;
-      let dy = y - стикДвижение.oy;
-      const длина = Math.hypot(dx, dy);
-      const макс = РАДИУС_СТИКА;
-      if (длина > макс){
-        dx = dx / длина * макс;
-        dy = dy / длина * макс;
-        стикДвижение.ox = x - dx;
-        стикДвижение.oy = y - dy;
+    if (левыйСтик.активен && t.identifier === левыйСтик.id) {
+      левыйСтик.x = x; левыйСтик.y = y;
+      let dx = x - левыйСтик.ox;
+      let dy = y - левыйСтик.oy;
+      const дл = Math.hypot(dx, dy);
+      if (дл > РАДИУС_СТИКА) {
+        dx = dx / дл * РАДИУС_СТИКА;
+        dy = dy / дл * РАДИУС_СТИКА;
+        левыйСтик.ox = x - dx;
+        левыйСтик.oy = y - dy;
       }
-      стикДвижение.dx = dx / макс;
-      стикДвижение.dy = dy / макс;
-      if (Math.hypot(стикДвижение.dx, стикДвижение.dy) < МЁРТВАЯ_ЗОНА){
-        стикДвижение.dx = 0; стикДвижение.dy = 0;
+      левыйСтик.dx = dx / РАДИУС_СТИКА;
+      левыйСтик.dy = dy / РАДИУС_СТИКА;
+      if (Math.hypot(левыйСтик.dx, левыйСтик.dy) < МЁРТВАЯ_ЗОНА) {
+        левыйСтик.dx = 0; левыйСтик.dy = 0;
       }
     }
 
-    /* Правый стик */
-    if (стикПрицел.активен && t.identifier === стикПрицел.id){
-      стикПрицел.x = x; стикПрицел.y = y;
-      let dx = x - стикПрицел.ox;
-      let dy = y - стикПрицел.oy;
-      const длина = Math.hypot(dx, dy);
-      const макс = РАДИУС_СТИКА;
-      if (длина > макс){
-        dx = dx / длина * макс;
-        dy = dy / длина * макс;
-        стикПрицел.ox = x - dx;
-        стикПрицел.oy = y - dy;
-      }
-      стикПрицел.dx = dx / макс;
-      стикПрицел.dy = dy / макс;
-      if (Math.hypot(стикПрицел.dx, стикПрицел.dy) < МЁРТВАЯ_ЗОНА){
-        стикПрицел.dx = 0; стикПрицел.dy = 0;
-      }
+    if (правыйСтик.активен && t.identifier === правыйСтик.id) {
+      /* Разница движений = поворот камеры */
+      const dx = x - правыйСтик.x;
+      const dy = y - правыйСтик.y;
+      игрок.угол += dx * 0.006;
+      /* Лёгкий вертикальный «наклон» — можно использовать для покачивания */
+      правыйСтик.x = x; правыйСтик.y = y;
+      if (Math.hypot(dx, dy) > 4) правыйСтик.стрелял = true;
     }
   }
 }
 
-function обработатьКосEnd(e){
-  for (let i = 0; i < e.changedTouches.length; i++){
+function обработатьКосEnd(e) {
+  for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i];
 
-    for (const к of кнопкиДействий){
-      if (к.tid === t.identifier){
-        к.нажата = false;
+    for (const к of кнопки) {
+      if (к.tid === t.identifier) {
         к.tid = null;
+        if (к.ключ === 'бег') бег = false;
       }
     }
 
-    if (стикДвижение.активен && t.identifier === стикДвижение.id){
-      стикДвижение.активен = false;
-      стикДвижение.id = null;
-      стикДвижение.dx = 0; стикДвижение.dy = 0;
+    if (левыйСтик.активен && t.identifier === левыйСтик.id) {
+      левыйСтик.активен = false;
+      левыйСтик.id = null;
+      левыйСтик.dx = 0; левыйСтик.dy = 0;
     }
 
-    if (стикПрицел.активен && t.identifier === стикПрицел.id){
-      стикПрицел.активен = false;
-      стикПрицел.id = null;
-      стикПрицел.dx = 0; стикПрицел.dy = 0;
+    if (правыйСтик.активен && t.identifier === правыйСтик.id) {
+      /* Если палец быстро тапнул — выстрел */
+      const время = performance.now() - правыйСтик.тапТаймер;
+      if (время < 250 && !правыйСтик.стрелял) {
+        if (состояние === 'игра') выстрел();
+      }
+      правыйСтик.активен = false;
+      правыйСтик.id = null;
     }
   }
+}
+
+function нажатьКнопку(к) {
+  if (к.ключ === 'перезарядка') начатьПерезарядку();
+  if (к.ключ === 'меткийГлаз')  переключитьМеткийГлаз();
+  if (к.ключ === 'бег')         бег = true;
 }
 
 холст.addEventListener('touchstart', e => {
   e.preventDefault();
-  включитьЗвук();
-  if (ЗВУК && ЗВУК.state === 'suspended') ЗВУК.resume();
 
-  if (состояние === 'меню' || состояние === 'конец'){
+  if (состояние === 'меню' || состояние === 'конец') {
     начатьИгру();
     return;
   }
@@ -432,479 +909,285 @@ function обработатьКосEnd(e){
 }, { passive: false });
 
 /* ==========================================================
-   МИР
+   9. ЛОГИКА ИГРЫ
    ========================================================== */
-const МИР = { ш: 4200, в: 4200 };
-const ЦЕНТР_X = 2100, ЦЕНТР_Y = 2100;
-
-let дома      = [];
-let объекты   = [];
-let крапинки  = [];
-let пятна     = [];
-let текстураЗемли = null;
-
-const камера = { x: 0, y: 0 };
-
-/* ---------- Текстура земли ---------- */
-function построитьТекстуруЗемли(){
-  const п = document.createElement('canvas');
-  п.width = п.height = 160;
-  const pc = п.getContext('2d');
-
-  /* Основа */
-  pc.fillStyle = '#cf9f5e';
-  pc.fillRect(0, 0, 160, 160);
-
-  /* Крупные пятна */
-  for (let i = 0; i < 18; i++){
-    const x = Math.random() * 160, y = Math.random() * 160;
-    const r = 12 + Math.random() * 30;
-    const г = pc.createRadialGradient(x, y, 1, x, y, r);
-    г.addColorStop(0, 'rgba(140,100,55,0.16)');
-    г.addColorStop(1, 'rgba(140,100,55,0)');
-    pc.fillStyle = г;
-    pc.beginPath(); pc.arc(x, y, r, 0, ДВА_ПИ); pc.fill();
-  }
-
-  /* Мелкие крупинки */
-  for (let i = 0; i < 700; i++){
-    const v = Math.random();
-    if (v < 0.5) pc.fillStyle = 'rgba(110,75,35,' + (0.08 + Math.random() * 0.22) + ')';
-    else if (v < 0.85) pc.fillStyle = 'rgba(180,140,80,' + (0.06 + Math.random() * 0.18) + ')';
-    else pc.fillStyle = 'rgba(80,55,25,' + (0.06 + Math.random() * 0.2) + ')';
-    const s = 0.8 + Math.random() * 2;
-    pc.fillRect(Math.random() * 160, Math.random() * 160, s, s);
-  }
-
-  /* Трещинки */
-  for (let i = 0; i < 9; i++){
-    pc.strokeStyle = 'rgba(90,60,30,' + (0.08 + Math.random() * 0.14) + ')';
-    pc.lineWidth = 0.6 + Math.random() * 1.2;
-    pc.beginPath();
-    let x = Math.random() * 160, y = Math.random() * 160;
-    pc.moveTo(x, y);
-    for (let j = 0; j < 6; j++){
-      x += (Math.random() - 0.5) * 26;
-      y += (Math.random() - 0.5) * 26;
-      pc.lineTo(x, y);
-    }
-    pc.stroke();
-  }
-
-  /* Травинки */
-  for (let i = 0; i < 40; i++){
-    const x = Math.random() * 160, y = Math.random() * 160;
-    pc.strokeStyle = 'rgba(110,120,55,' + (0.12 + Math.random() * 0.22) + ')';
-    pc.lineWidth = 1;
-    pc.beginPath();
-    pc.moveTo(x, y);
-    pc.lineTo(x + (Math.random() - 0.5) * 4, y - 2 - Math.random() * 3);
-    pc.stroke();
-  }
-
-  текстураЗемли = ctx.createPattern(п, 'repeat');
-}
-
-/* ---------- Генерация мира ---------- */
-function построитьМир(){
-  дома     = [];
-  объекты  = [];
-  крапинки = [];
-  пятна    = [];
-
-  /* --- Два ряда домов вдоль главной улицы --- */
-  const колонки = [ЦЕНТР_X - 960, ЦЕНТР_X - 640, ЦЕНТР_X - 320, ЦЕНТР_X, ЦЕНТР_X + 320, ЦЕНТР_X + 640];
-  const верх    = ['#7c5233', '#6d4a2e', '#8a5c3a', '#6b4327', '#7a4f30', '#86583a'];
-  const низ     = ['#6b4327', '#7a4f30', '#6d4a2e', '#86583a', '#7c5233', '#8a5c3a'];
-
-  for (let i = 0; i < колонки.length; i++){
-    дома.push({ x: колонки[i], y: ЦЕНТР_Y - 460, w: 280, h: 220, c: верх[i], дверь: 'вниз' });
-    дома.push({ x: колонки[i], y: ЦЕНТР_Y + 240, w: 280, h: 220, c: низ[i],  дверь: 'вверх' });
-  }
-
-  /* Салон в центре */
-  дома.push({ x: ЦЕНТР_X - 150, y: ЦЕНТР_Y - 130, w: 300, h: 260, c: '#8f5d33', дверь: 'нет', салун: true });
-
-  /* Дальние постройки */
-  const дальние = [
-    { x: ЦЕНТР_X - 1500, y: ЦЕНТР_Y - 1100, w: 240, h: 180, c: '#6d4a2e', дверь: 'вниз' },
-    { x: ЦЕНТР_X + 1200, y: ЦЕНТР_Y +  900, w: 220, h: 170, c: '#7a4f30', дверь: 'вверх' },
-    { x: ЦЕНТР_X - 1250, y: ЦЕНТР_Y + 1250, w: 260, h: 190, c: '#7c5233', дверь: 'вверх' },
-    { x: ЦЕНТР_X + 1450, y: ЦЕНТР_Y -  950, w: 200, h: 160, c: '#6b4327', дверь: 'вниз' }
-  ];
-  for (const д of дальние) дома.push(д);
-
-  /* --- Пустынные объекты --- */
-  const вГороде = (x, y) =>
-    x > ЦЕНТР_X - 1200 && x < ЦЕНТР_X + 1150 && y > ЦЕНТР_Y - 750 && y < ЦЕНТР_Y + 750;
-
-  for (let i = 0; i < 560; i++){
-    const x = случ(60, МИР.ш - 60);
-    const y = случ(60, МИР.в - 60);
-    if (вГороде(x, y)) continue;
-    if (сталкиваетсяСДомами(x, y, 40)) continue;
-
-    const r = Math.random();
-    const тип = r < 0.42 ? 'кактус' : (r < 0.74 ? 'камень' : 'дерево');
-    объекты.push({ x, y, тип, s: случ(0.75, 1.5), поворот: случ(0, ДВА_ПИ), seed: Math.random() });
-  }
-
-  /* Бочки возле домов */
-  for (let i = 0; i < 34; i++){
-    const x = ЦЕНТР_X + случ(-1150, 1100);
-    const y = ЦЕНТР_Y + (Math.random() < 0.5 ? -200 : 200) + случ(-24, 24);
-    if (сталкиваетсяСДомами(x, y, 24)) continue;
-    объекты.push({ x, y, тип: 'бочка', s: 1, поворот: 0, seed: Math.random() });
-  }
-
-  /* --- Декоративные крапинки и пятна --- */
-  for (let i = 0; i < 2400; i++){
-    крапинки.push({
-      x: случ(0, МИР.ш), y: случ(0, МИР.в),
-      r: случ(0.8, 2.6), a: случ(0.04, 0.16)
-    });
-  }
-  for (let i = 0; i < 160; i++){
-    пятна.push({
-      x: случ(0, МИР.ш), y: случ(0, МИР.в),
-      r: случ(70, 220), a: случ(0.015, 0.07)
-    });
-  }
-}
-
-/* ---------- Коллизии ---------- */
-function сталкиваетсяСДомами(x, y, r){
-  for (const д of дома){
-    const cx = огр(x, д.x, д.x + д.w);
-    const cy = огр(y, д.y, д.y + д.h);
-    const dx = x - cx, dy = y - cy;
-    if (dx*dx + dy*dy < r*r) return д;
-  }
-  return null;
-}
-
-function вытолкнутьИзДомов(сущ){
-  for (const д of дома){
-    const cx = огр(сущ.x, д.x, д.x + д.w);
-    const cy = огр(сущ.y, д.y, д.y + д.h);
-    const dx = сущ.x - cx;
-    const dy = сущ.y - cy;
-    const d2 = dx*dx + dy*dy;
-
-    if (d2 < сущ.r * сущ.r){
-      const d = Math.sqrt(d2);
-      if (d < 0.0001){
-        const слева  = сущ.x - д.x;
-        const справа = д.x + д.w - сущ.x;
-        const сверху = сущ.y - д.y;
-        const снизу  = д.y + д.h - сущ.y;
-        const м = Math.min(слева, справа, сверху, снизу);
-        if      (м === слева)  сущ.x = д.x - сущ.r;
-        else if (м === справа) сущ.x = д.x + д.w + сущ.r;
-        else if (м === сверху) сущ.y = д.y - сущ.r;
-        else                   сущ.y = д.y + д.h + сущ.r;
-      } else {
-        const выт = (сущ.r - d) / d;
-        сущ.x += dx * выт;
-        сущ.y += dy * выт;
-      }
-    }
-  }
-  сущ.x = огр(сущ.x, сущ.r, МИР.ш - сущ.r);
-  сущ.y = огр(сущ.y, сущ.r, МИР.в - сущ.r);
-}
-
-/* Отрезок vs прямоугольник (Liang-Barsky) */
-function отрезокПрямоуг(x1, y1, x2, y2, r){
-  const dx = x2 - x1, dy = y2 - y1;
-  let t0 = 0, t1 = 1;
-  const p = [-dx, dx, -dy, dy];
-  const q = [x1 - r.x, r.x + r.w - x1, y1 - r.y, r.y + r.h - y1];
-
-  for (let i = 0; i < 4; i++){
-    if (p[i] === 0){
-      if (q[i] < 0) return false;
-    } else {
-      const t = q[i] / p[i];
-      if (p[i] < 0){ if (t > t1) return false; if (t > t0) t0 = t; }
-      else         { if (t < t0) return false; if (t < t1) t1 = t; }
-    }
-  }
-  return true;
-}
-
-/* Отрезок vs круг */
-function отрезокКруг(x1, y1, x2, y2, cx, cy, r){
-  const dx = x2 - x1, dy = y2 - y1;
-  const l2 = dx*dx + dy*dy;
-  let t = l2 ? ((cx - x1) * dx + (cy - y1) * dy) / l2 : 0;
-  t = огр(t, 0, 1);
-  const px = x1 + dx * t, py = y1 + dy * t;
-  return (px - cx) * (px - cx) + (py - cy) * (py - cy) <= r * r;
-}
-
-/* Прямая видимость — нет препятствий */
-function естьПрямаяВидимость(x1, y1, x2, y2){
-  for (const д of дома) if (отрезокПрямоуг(x1, y1, x2, y2, д)) return false;
-  return true;
-}
-
-/* ==========================================================
-   СОСТОЯНИЕ ИГРЫ
-   ========================================================== */
-let состояние = 'меню';         // меню | игра | конец
-let пули      = [];
-let враги     = [];
-let частицы   = [];
-let конь      = null;
-
-let тряска = 0;
-let время  = 0;
-let счёт   = 0;
-let убийств = 0;
-let таймерСпавна = 0;
-let последнийКадр = performance.now();
-let вспышкаУрона = 0;
-let таймерПодсказки = 0;
-
-const игрок = {
-  x: ЦЕНТР_X, y: ЦЕНТР_Y + 120, r: 15,
-  угол: 0, фазаШага: 0,
-  хп: 100, максХп: 100,
-  патроны: 12, максПатронов: 12, запас: 72,
-  откатВыстрела: 0, перезарядка: 0,
-  меткийГлаз: 1, мгАктивен: false,
-  верхом: false, урон: 0,
-  движется: false
-};
-
-/* ---------- Запуск / рестарт ---------- */
-function начатьИгру(){
+function начатьИгру() {
   состояние = 'игра';
-  пули = [];
-  враги = [];
-  частицы = [];
+  время = 0;
   счёт = 0;
   убийств = 0;
-  время = 0;
-  тряска = 0;
-  таймерСпавна = 1.2;
-  таймерПодсказки = 3.5;
+  таймерСпавна = 1.0;
+  таймерПодсказки = 4;
 
-  игрок.x = ЦЕНТР_X;
-  игрок.y = ЦЕНТР_Y + 140;
+  игрок.x = 16; игрок.y = 24;
   игрок.угол = -Math.PI / 2;
   игрок.хп = 100;
-  игрок.патроны = 12;
-  игрок.запас = 72;
+  игрок.патроны = 6;
+  игрок.запас = 42;
   игрок.откатВыстрела = 0;
   игрок.перезарядка = 0;
   игрок.меткийГлаз = 1;
   игрок.мгАктивен = false;
-  игрок.верхом = false;
-  игрок.урон = 0;
-  игрок.фазаШага = 0;
+  игрок.тряска = 0;
+  игрок.вспышкаСтвола = 0;
 
-  конь = { x: ЦЕНТР_X + 110, y: ЦЕНТР_Y + 190, r: 20, угол: 0, фазаШага: 0 };
+  спрайты = [];
+  эффекты = [];
 
-  for (let i = 0; i < 4; i++) создатьВрага();
+  /* Несколько врагов на старте */
+  for (let i = 0; i < 5; i++) создатьВрага();
 
-  обновитьКамеру(true);
-  последнийКадр = performance.now();
+  /* Немного декора — кактусы и бочки */
+  разместитьДекор();
 }
 
-function конецИгры(){
-  состояние = 'конец';
-  мышь.нажата = false;
-  for (let i = 0; i < 30; i++){
-    const a = Math.random() * ДВА_ПИ, sp = случ(60, 320);
-    частицы.push({
-      x: игрок.x, y: игрок.y,
-      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-      жизнь: случ(0.4, 1.1), макс: 1.1,
-      цвет: '#8f1d16', размер: случ(2, 5), гравитация: 0
+function разместитьДекор() {
+  const клеток = РАЗМЕР_КАРТЫ * РАЗМЕР_КАРТЫ;
+  let попыток = 0;
+  let кактусов = 0, бочек = 0;
+
+  while ((кактусов < 25 || бочек < 12) && попыток < 800) {
+    попыток++;
+    const x = случ(1.5, РАЗМЕР_КАРТЫ - 1.5);
+    const y = случ(1.5, РАЗМЕР_КАРТЫ - 1.5);
+
+    if (этоСтена(x, y)) continue;
+    if (раст(x, y, игрок.x, игрок.y) < 3) continue;
+
+    let занято = false;
+    for (const с of спрайты) {
+      if (раст(s.x, s.y, x, y) < 1.2) { занято = true; break; }
+    }
+    if (занято) continue;
+
+    if (кактусов < 25 && (бочек >= 12 || Math.random() < 0.65)) {
+      спрайты.push({
+        x, y,
+        тип: 'кактус',
+        текстура: СПРАЙТ_КАКТУС,
+        ширина: 0.85,
+        высота: 0.85,
+        смещение: 0.55, /* смещение от пола — растёт из земли */
+        масштабY: 1.0
+      });
+      кактусов++;
+    } else {
+      спрайты.push({
+        x, y,
+        тип: 'бочка',
+        текстура: СПРАЙТ_БОЧКА,
+        ширина: 0.6,
+        высота: 0.6,
+        смещение: 0.30,
+        масштабY: 1.0
+      });
+      бочек++;
+    }
+  }
+}
+
+function создатьВрага() {
+  for (let попыток = 0; попыток < 100; попыток++) {
+    const x = случ(2, РАЗМЕР_КАРТЫ - 2);
+    const y = случ(2, РАЗМЕР_КАРТЫ - 2);
+
+    if (этоСтена(x, y)) continue;
+    const d = раст(x, y, игрок.x, игрок.y);
+    if (d < 6 || d > 20) continue;
+
+    спрайты.push({
+      x, y,
+      тип: 'враг',
+      текстура: СПРАЙТ_КОВБОЙ,
+      ширина: 0.7,
+      высота: 0.7,
+      смещение: 0.0,
+      масштабY: 1.0,
+      хп: 100,
+      максХп: 100,
+      угол: 0,
+      откатВыстрела: случ(0.8, 2.0),
+      скорость: случ(0.7, 1.2),
+      вспышка: 0,
+      уронВспышка: 0
     });
-  }
-  звукПопадание();
-}
-
-/* ==========================================================
-   КАМЕРА ОТ ТРЕТЬЕГО ЛИЦА
-   ========================================================== */
-const СМЕЩЕНИЕ_ВПЕРЁД = 150;
-
-function обновитьКамеру(мгновенно){
-  const смотрX = игрок.x + Math.cos(игрок.угол) * СМЕЩЕНИЕ_ВПЕРЁД;
-  const смотрY = игрок.y + Math.sin(игрок.угол) * СМЕЩЕНИЕ_ВПЕРЁД;
-
-  let tx = смотрX - Ш / 2;
-  let ty = смотрY - В / 2;
-
-  tx = огр(tx, 0, Math.max(0, МИР.ш - Ш));
-  ty = огр(ty, 0, Math.max(0, МИР.в - В));
-  if (МИР.ш < Ш) tx = (МИР.ш - Ш) / 2;
-  if (МИР.в < В) ty = (МИР.в - В) / 2;
-
-  if (мгновенно){
-    камера.x = tx; камера.y = ty;
-  } else {
-    камера.x += (tx - камера.x) * 0.14;
-    камера.y += (ty - камера.y) * 0.14;
+    return;
   }
 }
 
-/* ==========================================================
-   ИГРОК
-   ========================================================== */
-function ближайшийВраг(x, y, максD){
-  let лучший = null, лучD = максD;
-  for (const в of враги){
-    const d = раст(x, y, в.x, в.y);
-    if (d < лучD){ лучD = d; лучший = в; }
-  }
-  return лучший;
-}
-
-function переключитьМеткийГлаз(){
+function переключитьМеткийГлаз() {
   if (состояние !== 'игра') return;
-  if (игрок.мгАктивен){ игрок.мгАктивен = false; return; }
-  if (игрок.меткийГлаз > 0.15){
-    игрок.мгАктивен = true;
-    звукМеткийГлаз();
-  }
+  if (игрок.мгАктивен) { игрок.мгАктивен = false; return; }
+  if (игрок.меткийГлаз > 0.15) игрок.мгАктивен = true;
 }
 
-function начатьПерезарядку(){
+function начатьПерезарядку() {
   if (состояние !== 'игра') return;
   if (игрок.перезарядка > 0) return;
   if (игрок.патроны >= игрок.максПатронов) return;
   if (игрок.запас <= 0) return;
-  игрок.перезарядка = 1.35;
-  звукПерезарядка();
+  игрок.перезарядка = 1.6;
 }
 
-function выстрел(){
+function выстрел() {
   if (игрок.перезарядка > 0) return;
-  if (игрок.патроны <= 0){ начатьПерезарядку(); return; }
+  if (игрок.патроны <= 0) { начатьПерезарядку(); return; }
 
   игрок.патроны--;
-  игрок.откатВыстрела = игрок.мгАктивен ? 0.11 : 0.17;
+  игрок.откатВыстрела = 0.35;
+  игрок.вспышкаСтвола = 0.10;
+  игрок.тряска = Math.min(игрок.тряска + 5, 12);
 
-  const разброс = игрок.мгАктивен ? 0 : 0.05;
-  const a = игрок.угол + случ(-разброс, разброс);
+  /* Хитскан по лучу взгляда: ищем ближайшего врага в узком конусе */
+  const dirX = Math.cos(игрок.угол);
+  const dirY = Math.sin(игрок.угол);
 
-  const bx = игрок.x + Math.cos(игрок.угол) * 26;
-  const by = игрок.y + Math.sin(игрок.угол) * 26;
+  let ближайший = null, ближайшееРасст = 40;
 
-  пули.push({
-    x: bx, y: by, px: bx, py: by,
-    vx: Math.cos(a) * 1500, vy: Math.sin(a) * 1500,
-    жизнь: 1.4, дружеская: true, урон: 35
-  });
+  for (const с of спрайты) {
+    if (с.тип !== 'враг') continue;
+    const dx = с.x - игрок.x;
+    const dy = с.y - игрок.y;
+    const расст = Math.hypot(dx, dy);
+    if (расст > 30) continue;
 
-  /* Вспышка */
-  for (let i = 0; i < 7; i++){
-    const ang = a + случ(-0.5, 0.5), sp = случ(80, 420);
-    частицы.push({
-      x: bx, y: by,
-      vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
-      жизнь: случ(0.05, 0.18), макс: 0.18,
-      цвет: i % 2 ? '#fff0a8' : '#ffb43a',
-      размер: случ(2, 5), гравитация: 0
+    /* Угол между направлением взгляда и целью */
+    const скал = (dx * dirX + dy * dirY) / расст;
+    /* Порог зависит от расстояния — как настоящий конус разброса */
+    const порог = 1 - Math.min(0.30, 0.06 + расст * 0.006);
+    if (скал < порог) continue;
+
+    /* Проверка стен между игроком и целью */
+    if (!лучСвободен(игрок.x, игрок.y, с.x, с.y)) continue;
+
+    if (расст < ближайшееРасст) {
+      ближайшееРасст = расст;
+      ближайший = с;
+    }
+  }
+
+  if (ближайший) {
+    /* Урон зависит от расстояния */
+    const урон = игрок.мгАктивен ? 120 : 45;
+    ближайший.хп -= урон;
+    ближайший.вспышка = 0.20;
+
+    /* Частицы крови в точке попадания */
+    for (let i = 0; i < 8; i++) {
+      эффекты.push({
+        x: ближайший.x, y: ближайший.y,
+        vx: случ(-2, 2), vy: случ(-2, 2),
+        жизнь: случ(0.3, 0.6), макс: 0.6,
+        цвет: '#a3151a', размер: случ(2, 5)
+      });
+    }
+
+    if (ближайший.хп <= 0) {
+      убитьВрага(ближайший);
+    }
+  }
+}
+
+/* Проверка свободного луча (алгоритм DDA по карте) */
+function лучСвободен(x0, y0, x1, y1) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const расст = Math.hypot(dx, dy);
+  const шагов = Math.ceil(расст * 8);
+
+  for (let i = 1; i < шагов; i++) {
+    const t = i / шагов;
+    const x = x0 + dx * t;
+    const y = y0 + dy * t;
+    if (этоСтена(x, y)) return false;
+  }
+  return true;
+}
+
+function убитьВрага(враг) {
+  const idx = спрайты.indexOf(враг);
+  if (idx >= 0) спрайты.splice(idx, 1);
+
+  счёт += 100;
+  убийств++;
+
+  for (let i = 0; i < 20; i++) {
+    эффекты.push({
+      x: враг.x, y: враг.y,
+      vx: случ(-3, 3), vy: случ(-3, 3),
+      жизнь: случ(0.4, 0.9), макс: 0.9,
+      цвет: i % 3 ? '#a3151a' : '#6d0f12',
+      размер: случ(2, 5)
     });
   }
-
-  /* Гильза */
-  частицы.push({
-    x: bx, y: by,
-    vx: Math.cos(a + 2.2) * 160, vy: Math.sin(a + 2.2) * 160,
-    жизнь: 0.8, макс: 0.8, цвет: '#d9b23a', размер: 2.4, гравитация: 0
-  });
-
-  тряска = Math.min(тряска + 4, 10);
-  звукВыстрел(0.16);
 }
 
-function переключитьКоня(){
+/* ==========================================================
+   10. ОБНОВЛЕНИЕ ИГРЫ
+   ========================================================== */
+function обновить(dt) {
   if (состояние !== 'игра') return;
 
-  if (игрок.верхом){
-    игрок.верхом = false;
-    const a = игрок.угол + Math.PI / 2;
-    конь.x = игрок.x + Math.cos(a) * 52;
-    конь.y = игрок.y + Math.sin(a) * 52;
-    вытолкнутьИзДомов(конь);
-  } else if (конь && раст(конь.x, конь.y, игрок.x, игрок.y) < 100){
-    игрок.верхом = true;
-    игрок.x = конь.x;
-    игрок.y = конь.y;
-    звукСвист();
-  }
-}
+  время += dt;
+  if (таймерПодсказки > 0) таймерПодсказки -= dt;
 
-function обновитьИгрока(dt){
-  if (игрок.хп <= 0) return;
-
-  /* --- Ввод: движение --- */
-  let ix = 0, iy = 0;
-
-  if (клавиши.KeyW || клавиши.ArrowUp)    iy--;
-  if (клавиши.KeyS || клавиши.ArrowDown)  iy++;
-  if (клавиши.KeyA || клавиши.ArrowLeft)  ix--;
-  if (клавиши.KeyD || клавиши.ArrowRight) ix++;
-
-  if (стикДвижение.активен && (стикДвижение.dx || стикДвижение.dy)){
-    ix += стикДвижение.dx;
-    iy += стикДвижение.dy;
+  /* ---- ОБЗОР МЫШЬЮ ---- */
+  if (указательЗахвачен && мышь.dx !== 0) {
+    игрок.угол += мышь.dx * 0.0025;
+    мышь.dx = 0;
   }
 
-  const длина = Math.hypot(ix, iy);
-  игрок.движется = длина > 0.01;
+  /* ---- ДВИЖЕНИЕ ---- */
+  let движВперёд = 0;
+  let движВбок = 0;
 
-  let скорость = игрок.верхом ? 340 : 200;
-  if ((клавиши.ShiftLeft || клавиши.ShiftRight) && !игрок.верхом) скорость *= 1.45;
+  if (клавиши.KeyW || клавиши.ArrowUp)    движВперёд += 1;
+  if (клавиши.KeyS || клавиши.ArrowDown)  движВперёд -= 1;
+  if (клавиши.KeyA) движВбок -= 1;
+  if (клавиши.KeyD) движВбок += 1;
+  if (клавиши.ArrowLeft)  игрок.угол -= dt * 2.2;
+  if (клавиши.ArrowRight) игрок.угол += dt * 2.2;
 
-  if (длина > 0){
-    ix /= длина; iy /= длина;
-    игрок.x += ix * скорость * dt;
-    игрок.y += iy * скорость * dt;
-    игрок.фазаШага += dt * (игрок.верхом ? 14 : 11);
-  } else {
-    игрок.фазаШага *= Math.pow(0.02, dt);
+  /* Тач-стик движения */
+  if (левыйСтик.активен) {
+    движВперёд += -левыйСтик.dy;
+    движВбок    +=  левыйСтик.dx;
   }
 
-  вытолкнутьИзДомов(игрок);
+  let скорость = 3.2;
+  if ((клавиши.ShiftLeft || клавиши.ShiftRight || бег) && !игрок.мгАктивен) скорость *= 1.7;
+  if (игрок.мгАктивен) скорость *= 0.45;
 
-  /* --- Ввод: прицел --- */
-  let уголПрицела = игрок.угол;
-  let хочуСтрелять = false;
+  /* Вектор направления */
+  const dirX = Math.cos(игрок.угол);
+  const dirY = Math.sin(игрок.угол);
 
-  if (стикПрицел.активен && (стикПрицел.dx || стикПрицел.dy)){
-    уголПрицела = Math.atan2(стикПрицел.dy, стикПрицел.dx);
-    хочуСтрелять = true;
-  } else if (мышь.есть && !ЭТО_ТАЧ){
-    const mx = мышь.x + камера.x;
-    const my = мышь.y + камера.y;
-    уголПрицела = Math.atan2(my - игрок.y, mx - игрок.x);
-    хочуСтрелять = мышь.нажата;
+  /* Нормализация диагонали */
+  const длина = Math.hypot(движВперёд, движВбок) || 1;
+  const нВпер = движВперёд / длина;
+  const нВбок  = движВбок / длина;
+
+  const новаяX = игрок.x + (dirX * нВпер - dirY * нВбок) * скорость * dt;
+  const новаяY = игрок.y + (dirY * нВпер + dirX * нВбок) * скорость * dt;
+
+  /* Раздельно проверяем X и Y — чтобы скользить по стенам */
+  if (!этоСтена(новаяX, игрок.y)) игрок.x = новаяX;
+  if (!этоСтена(игрок.x, новаяY)) игрок.y = новаяY;
+
+  /* ---- ОГОНЬ ---- */
+  if ((мышь.нажата || правыйСтик.активен && правыйСтик.стрелял) && игрок.откатВыстрела <= 0 && игрок.перезарядка <= 0) {
+    /* Для мыши — стреляем при удержании (с откатом). Для тача — только при свайпе. */
+    if (мышь.нажата) выстрел();
   }
 
-  /* Меткий глаз — прицел на ближайшего врага */
-  if (игрок.мгАктивен){
-    const ц = ближайшийВраг(игрок.x, игрок.y, 950);
-    if (ц) уголПрицела = Math.atan2(ц.y - игрок.y, ц.x - игрок.x);
-  }
+  /* ---- ОТКАТЫ ---- */
+  if (игрок.откатВыстрела > 0) игрок.откатВыстрела -= dt;
+  if (игрок.вспышкаСтвола > 0) игрок.вспышкаСтвола -= dt;
+  if (игрок.тряска > 0) игрок.тряска = Math.max(0, игрок.тряска - dt * 30);
 
-  /* Плавный поворот */
-  let разница = уголПрицела - игрок.угол;
-  while (разница >  Math.PI) разница -= ДВА_ПИ;
-  while (разница < -Math.PI) разница += ДВА_ПИ;
-  игрок.угол += разница * Math.min(1, dt * 24);
-
-  /* --- Перезарядка --- */
-  if (игрок.перезарядка > 0){
+  /* ---- ПЕРЕЗАРЯДКА ---- */
+  if (игрок.перезарядка > 0) {
     игрок.перезарядка -= dt;
-    if (игрок.перезарядка <= 0){
+    if (игрок.перезарядка <= 0) {
       игрок.перезарядка = 0;
       const нужно = игрок.максПатронов - игрок.патроны;
       const взять = Math.min(нужно, игрок.запас);
@@ -913,903 +1196,619 @@ function обновитьИгрока(dt){
     }
   }
 
-  if (игрок.откатВыстрела > 0) игрок.откатВыстрела -= dt;
-  if (игрок.урон > 0)          игрок.урон -= dt;
-
-  /* --- Огонь --- */
-  if (хочуСтрелять && игрок.откатВыстрела <= 0 && игрок.перезарядка <= 0){
-    выстрел();
-  }
-
-  /* --- Расход Меткого глаза --- */
-  if (игрок.мгАктивен){
-    игрок.меткийГлаз -= dt * 0.30;
-    if (игрок.меткийГлаз <= 0){
+  /* ---- МЕТКИЙ ГЛАЗ ---- */
+  if (игрок.мгАктивен) {
+    игрок.меткийГлаз -= dt * 0.28;
+    if (игрок.меткийГлаз <= 0) {
       игрок.меткийГлаз = 0;
       игрок.мгАктивен = false;
     }
-  } else if (игрок.меткийГлаз < 1){
-    игрок.меткийГлаз = Math.min(1, игрок.меткийГлаз + dt * 0.035);
+  } else if (игрок.меткийГлаз < 1) {
+    игрок.меткийГлаз = Math.min(1, игрок.меткийГлаз + dt * 0.04);
   }
 
-  /* --- Конь --- */
-  if (игрок.верхом){
-    конь.x = игрок.x;
-    конь.y = игрок.y;
-    конь.угол = игрок.угол;
-    if (длина > 0) конь.фазаШага += dt * 16;
-  } else if (конь){
-    const d = раст(конь.x, конь.y, игрок.x, игрок.y);
-    if (d > 300){
-      const a = Math.atan2(игрок.y - конь.y, игрок.x - конь.x);
-      конь.x += Math.cos(a) * 95 * dt;
-      конь.y += Math.sin(a) * 95 * dt;
-      конь.угол = a;
-      конь.фазаШага += dt * 9;
-      вытолкнутьИзДомов(конь);
-    }
-  }
-}
+  /* ---- ВРАГИ ---- */
+  const множительВремени = игрок.мгАктивен ? 0.4 : 1.0;
 
-/* ==========================================================
-   ВРАГИ
-   ========================================================== */
-function создатьВрага(){
-  for (let i = 0; i < 50; i++){
-    const a = Math.random() * ДВА_ПИ;
-    const d = случ(820, 1350);
-    const x = огр(игрок.x + Math.cos(a) * d, 60, МИР.ш - 60);
-    const y = огр(игрок.y + Math.sin(a) * d, 60, МИР.в - 60);
+  for (let i = спрайты.length - 1; i >= 0; i--) {
+    const с = спрайты[i];
+    if (с.тип !== 'враг') continue;
 
-    if (сталкиваетсяСДомами(x, y, 30)) continue;
+    if (с.вспышка > 0) с.вспышка -= dt;
+    if (с.уронВспышка > 0) с.уронВспышка -= dt;
 
-    враги.push({
-      x, y, r: 14,
-      хп: 70, максХп: 70,
-      угол: 0,
-      скорость: случ(100, 130) + Math.min(65, время * 0.55),
-      откатВыстрела: случ(0.6, 2.2),
-      бокНаправление: Math.random() < 0.5 ? -1 : 1,
-      бокТаймер: случ(0.4, 1.6),
-      урон: 0,
-      вспышка: 0,
-      фазаШага: Math.random() * 10
-    });
-    return;
-  }
-}
+    const dx = игрок.x - с.x;
+    const dy = игрок.y - с.y;
+    const расст = Math.hypot(dx, dy);
 
-function убитьВрага(в){
-  const i = враги.indexOf(в);
-  if (i >= 0) враги.splice(i, 1);
+    /* Смотрим на игрока */
+    с.угол = Math.atan2(dy, dx);
 
-  счёт += 100;
-  убийств++;
+    /* Движение к игроку, если он далеко, или стрейф */
+    if (расст > 3) {
+      const vx = (dx / расст) * с.скорость * dt * множительВремени;
+      const vy = (dy / расст) * с.скорость * dt * множительВремени;
 
-  for (let k = 0; k < 18; k++){
-    const a = Math.random() * ДВА_ПИ, sp = случ(40, 280);
-    частицы.push({
-      x: в.x, y: в.y,
-      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-      жизнь: случ(0.3, 0.8), макс: 0.8,
-      цвет: k % 3 ? '#a3151a' : '#6d0f12',
-      размер: случ(2, 4.5), гравитация: 0
-    });
-  }
-  звукПопадание();
-}
+      const новаяВX = с.x + vx;
+      const новаяВY = с.y + vy;
 
-function обновитьВрагов(dt){
-  for (const в of враги){
-    if (в.урон > 0) в.урон -= dt;
-    if (в.вспышка > 0) в.вспышка -= dt;
-
-    const d = раст(в.x, в.y, игрок.x, игрок.y);
-    const анг = Math.atan2(игрок.y - в.y, игрок.x - в.x);
-
-    в.бокТаймер -= dt;
-    if (в.бокТаймер <= 0){
-      в.бокТаймер = случ(0.6, 1.8);
-      в.бокНаправление = Math.random() < 0.5 ? -1 : 1;
+      if (!этоСтена(новаяВX, с.y)) с.x = новаяВX;
+      if (!этоСтена(с.x, новаяВY)) с.y = новаяВY;
     }
 
-    let mx = 0, my = 0;
-    if (d > 350){ mx += Math.cos(анг); my += Math.sin(анг); }
-    else if (d < 210){ mx -= Math.cos(анг) * 0.7; my -= Math.sin(анг) * 0.7; }
-    mx += -Math.sin(анг) * в.бокНаправление * 0.75;
-    my +=  Math.cos(анг) * в.бокНаправление * 0.75;
-
-    const дл = Math.hypot(mx, my) || 1;
-    в.x += (mx / дл) * в.скорость * dt;
-    в.y += (my / дл) * в.скорость * dt;
-    в.фазаШага += dt * 10;
-
-    вытолкнутьИзДомов(в);
-
-    let разница = анг - в.угол;
-    while (разница >  Math.PI) разница -= ДВА_ПИ;
-    while (разница < -Math.PI) разница += ДВА_ПИ;
-    в.угол += разница * Math.min(1, dt * 8);
-
-    в.откатВыстрела -= dt;
-    if (d < 760 && в.откатВыстрела <= 0 && естьПрямаяВидимость(в.x, в.y, игрок.x, игрок.y)){
-      в.откатВыстрела = случ(1.1, 2.3);
-
-      const a = анг + случ(-0.12, 0.12);
-      пули.push({
-        x: в.x + Math.cos(a) * 20,
-        y: в.y + Math.sin(a) * 20,
-        px: в.x + Math.cos(a) * 20,
-        py: в.y + Math.sin(a) * 20,
-        vx: Math.cos(a) * 640,
-        vy: Math.sin(a) * 640,
-        жизнь: 1.6, дружеская: false, урон: 8
-      });
-
-      в.вспышка = 0.07;
-      звукВыстрел(0.055);
+    /* Не подходить вплотную */
+    if (расст < 1.0 && расст > 0.01) {
+      с.x -= (dx / расст) * 0.5 * dt;
+      с.y -= (dy / расст) * 0.5 * dt;
     }
-  }
-}
 
-/* ==========================================================
-   ПУЛИ И ЧАСТИЦЫ
-   ========================================================== */
-function обновитьПули(dt){
-  for (let i = пули.length - 1; i >= 0; i--){
-    const п = пули[i];
+    /* Стрельба по игроку */
+    с.откатВыстрела -= dt * множительВремени;
+    if (расст < 14 && с.откатВыстрела <= 0 && лучСвободен(с.x, с.y, игрок.x, игрок.y)) {
+      с.откатВыстрела = случ(1.5, 3.0);
+      с.вспышка = 0.10;
 
-    п.px = п.x; п.py = п.y;
-    п.x += п.vx * dt;
-    п.y += п.vy * dt;
-    п.жизнь -= dt;
-
-    let мёртв = п.жизнь <= 0 || п.x < 0 || п.y < 0 || п.x > МИР.ш || п.y > МИР.в;
-
-    /* Столкновение с домами */
-    if (!мёртв){
-      for (const д of дома){
-        if (отрезокПрямоуг(п.px, п.py, п.x, п.y, д)){
-          мёртв = true;
-          for (let k = 0; k < 5; k++){
-            const a = Math.atan2(-п.vy, -п.vx) + случ(-1, 1), sp = случ(30, 180);
-            частицы.push({
-              x: п.x, y: п.y,
-              vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-              жизнь: случ(0.1, 0.35), макс: 0.35,
-              цвет: '#c9b08a', размер: случ(1.5, 3), гравитация: 0
-            });
-          }
-          break;
-        }
+      /* Шанс попасть зависит от расстояния */
+      const шанс = огр(1 - расст / 20, 0.15, 0.85);
+      if (Math.random() < шанс) {
+        ранитьИгрока(случ(6, 12));
       }
     }
-
-    /* Попадание в цели */
-    if (!мёртв){
-      if (п.дружеская){
-        for (const в of враги){
-          if (отрезокКруг(п.px, п.py, п.x, п.y, в.x, в.y, в.r + 4)){
-            в.хп -= п.урон;
-            в.урон = 0.15;
-            кровь(в.x, в.y, п.vx, п.vy);
-            мёртв = true;
-            if (в.хп <= 0) убитьВрага(в);
-            break;
-          }
-        }
-      } else {
-        if (отрезокКруг(п.px, п.py, п.x, п.y, игрок.x, игрок.y, игрок.r + 4)){
-          ранитьИгрока(п.урон);
-          кровь(игрок.x, игрок.y, п.vx, п.vy);
-          мёртв = true;
-        }
-      }
-    }
-
-    if (мёртв) пули.splice(i, 1);
   }
-}
 
-function кровь(x, y, vx, vy){
-  const a0 = Math.atan2(vy, vx);
-  for (let i = 0; i < 10; i++){
-    const a = a0 + случ(-0.9, 0.9), sp = случ(50, 280);
-    частицы.push({
-      x, y,
-      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-      жизнь: случ(0.25, 0.6), макс: 0.6,
-      цвет: '#a3151a', размер: случ(1.5, 3.5), гравитация: 0
-    });
-  }
-}
-
-function ранитьИгрока(урон){
-  if (игрок.хп <= 0) return;
-  игрок.хп -= урон;
-  игрок.урон = 0.3;
-  тряска = Math.min(тряска + 5, 14);
-  вспышкаУрона = 0.25;
-  звукПопадание();
-  if (игрок.хп <= 0){
-    игрок.хп = 0;
-    конецИгры();
-  }
-}
-
-function обновитьЧастицы(dt){
-  for (let i = частицы.length - 1; i >= 0; i--){
-    const ч = частицы[i];
+  /* ---- ЧАСТИЦЫ ---- */
+  for (let i = эффекты.length - 1; i >= 0; i--) {
+    const ч = эффекты[i];
     ч.жизнь -= dt;
-    if (ч.жизнь <= 0){ частицы.splice(i, 1); continue; }
+    if (ч.жизнь <= 0) { эффекты.splice(i, 1); continue; }
     ч.x += ч.vx * dt;
     ч.y += ч.vy * dt;
-    const к = Math.exp(-6 * dt);
-    ч.vx *= к;
-    ч.vy *= к;
-    ч.vy += (ч.гравитация || 0) * dt;
-  }
-}
-
-/* ==========================================================
-   ОБНОВЛЕНИЕ
-   ========================================================== */
-function обновить(dt){
-  if (тряска > 0) тряска = Math.max(0, тряска - dt * 26);
-  if (вспышкаУрона > 0) вспышкаУрона -= dt;
-  if (таймерПодсказки > 0) таймерПодсказки -= dt;
-
-  if (состояние !== 'игра'){
-    обновитьЧастицы(dt);
-    обновитьКамеру(false);
-    return;
+    ч.vx *= Math.exp(-4 * dt);
+    ч.vy *= Math.exp(-4 * dt);
   }
 
-  время += dt;
-
-  const зам = игрок.мгАктивен ? 0.35 : 1;
-
-  обновитьИгрока(dt * (игрок.мгАктивен ? 0.6 : 1));
-  обновитьКамеру(false);
-
-  обновитьВрагов(dt * зам);
-  обновитьПули(dt * зам);
-  обновитьЧастицы(dt);
-
+  /* ---- СПАВН ВРАГОВ ---- */
   таймерСпавна -= dt;
-  if (таймерСпавна <= 0){
-    const максВрагов = 4 + Math.min(15, Math.floor(время / 22));
-    if (враги.length < максВрагов) создатьВрага();
-    таймерСпавна = случ(0.7, 2.0);
+  if (таймерСпавна <= 0) {
+    const макс = 4 + Math.min(10, Math.floor(время / 20));
+    const текущих = спрайты.filter(с => с.тип === 'враг').length;
+    if (текущих < макс) создатьВрага();
+    таймерСпавна = случ(0.8, 2.0);
+  }
+}
+
+function ранитьИгрока(урон) {
+  игрок.хп -= урон;
+  игрок.тряска = Math.min(игрок.тряска + 8, 16);
+  if (игрок.хп <= 0) {
+    игрок.хп = 0;
+    состояние = 'конец';
+    if (указательЗахвачен) document.exitPointerLock();
   }
 }
 
 /* ==========================================================
-   ОТРИСОВКА
+   11. RAYCASTING РЕНДЕР
    ========================================================== */
+function отрисоватьКадр() {
+  /* Небо рисуем как градиент */
+  нарисоватьНебо();
 
-/* ---------- ЗЕМЛЯ ---------- */
-function нарисоватьЗемлю(){
-  const x0 = камера.x, y0 = камера.y, x1 = камера.x + Ш, y1 = камера.y + В;
+  /* Пол + потолок через floor casting */
+  нарисоватьПолПотолок();
 
-  /* Базовый паттерн */
-  if (текстураЗемли){
-    ctx.fillStyle = текстураЗемли;
-    ctx.fillRect(x0 - 100, y0 - 100, Ш + 200, В + 200);
-  } else {
-    ctx.fillStyle = '#cf9f5e';
-    ctx.fillRect(x0 - 100, y0 - 100, Ш + 200, В + 200);
-  }
+  /* Стены */
+  нарисоватьСтены();
 
-  /* Крупные пятна */
-  for (const п of пятна){
-    if (п.x + п.r < x0 || п.x - п.r > x1 || п.y + п.r < y0 || п.y - п.r > y1) continue;
-    ctx.globalAlpha = п.a;
-    ctx.fillStyle = '#8a6435';
-    ctx.beginPath();
-    ctx.arc(п.x, п.y, п.r, 0, ДВА_ПИ);
-    ctx.fill();
-  }
+  /* Спрайты */
+  нарисоватьСпрайты();
 
-  /* Крупинки */
-  for (const к of крапинки){
-    if (к.x < x0 || к.x > x1 || к.y < y0 || к.y > y1) continue;
-    ctx.globalAlpha = к.a;
-    ctx.fillStyle = '#6b4a24';
-    ctx.fillRect(к.x, к.y, к.r, к.r);
-  }
-  ctx.globalAlpha = 1;
+  /* Выводим изображение из буфера */
+  offCtx.putImageData(imageData, 0, 0);
+}
 
-  /* Главная улица */
-  ctx.fillStyle = '#b98a52';
-  ctx.fillRect(ЦЕНТР_X - 1340, ЦЕНТР_Y - 240, 2680, 480);
-
-  /* Края улицы */
-  ctx.fillStyle = 'rgba(120,85,45,0.32)';
-  ctx.fillRect(ЦЕНТР_X - 1340, ЦЕНТР_Y - 240, 2680, 22);
-  ctx.fillRect(ЦЕНТР_X - 1340, ЦЕНТР_Y + 218, 2680, 22);
-
-  /* Колеи */
-  ctx.fillStyle = 'rgba(120,85,45,0.20)';
-  ctx.fillRect(ЦЕНТР_X - 1340, ЦЕНТР_Y - 62, 2680, 14);
-  ctx.fillRect(ЦЕНТР_X - 1340, ЦЕНТР_Y + 48, 2680, 14);
-
-  /* Доски поперёк */
-  ctx.fillStyle = 'rgba(90,60,30,0.10)';
-  for (let x = ЦЕНТР_X - 1340; x < ЦЕНТР_X + 1340; x += 120){
-    ctx.fillRect(x, ЦЕНТР_Y - 240, 4, 480);
+/* ---- НЕБО (градиент) ---- */
+function нарисоватьНебо() {
+  const высота_горизонта = Math.floor(ВЫСОТА_БУФ / 2);
+  /* От тёмно-синего сверху к тёплому оранжевому у горизонта — закатное небо */
+  for (let y = 0; y < высота_горизонта; y++) {
+    const t = y / высота_горизонта;
+    const r = Math.floor(60 + t * 180);
+    const g = Math.floor(80 + t * 100);
+    const b = Math.floor(140 + t * 10);
+    const ц = цвет(r, g, b);
+    const строка = y * ШИРИНА_БУФ;
+    for (let x = 0; x < ШИРИНА_БУФ; x++) буфер[строка + x] = ц;
   }
 }
 
-/* ---------- ПУСТЫННЫЕ ОБЪЕКТЫ ---------- */
-function нарисоватьОбъекты(){
-  const x0 = камера.x - 100, y0 = камера.y - 100, x1 = камера.x + Ш + 100, y1 = камера.y + В + 100;
+/* ---- ПОЛ через floorcasting ---- */
+function нарисоватьПолПотолок() {
+  const dirX = Math.cos(игрок.угол);
+  const dirY = Math.sin(игрок.угол);
+  const плоХ = -dirY * ПЛОСКОСТЬ_X;
+  const плоY =  dirX * ПЛОСКОСТЬ_X;
 
-  for (const п of объекты){
-    if (п.x < x0 || п.x > x1 || п.y < y0 || п.y > y1) continue;
+  const горизонт = Math.floor(ВЫСОТА_БУФ / 2);
 
-    ctx.save();
-    ctx.translate(п.x, п.y);
+  /* Лучи на левом и правом краях */
+  const лучX0 = dirX - плоХ;
+  const лучY0 = dirY - плоY;
+  const лучX1 = dirX + плоХ;
+  const лучY1 = dirY + плоY;
 
-    /* Тень */
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
-    ctx.beginPath();
-    ctx.ellipse(6, 8, 18 * п.s, 10 * п.s, 0, 0, ДВА_ПИ);
-    ctx.fill();
+  /* Пол (нижняя половина) */
+  for (let y = горизонт + 1; y < ВЫСОТА_БУФ; y++) {
+    const p = y - горизонт;
+    const позРяда = (0.5 * ВЫСОТА_БУФ) / p;
 
-    ctx.scale(п.s, п.s);
+    const шагX = позРяда * (лучX1 - лучX0) / ШИРИНА_БУФ;
+    const шагY = позРяда * (лучY1 - лучY0) / ШИРИНА_БУФ;
 
-    if (п.тип === 'кактус'){
-      ctx.fillStyle = '#4a7a3a';
-      ctx.strokeStyle = '#2f5226';
-      ctx.lineWidth = 2;
+    let полX = игрок.x + позРяда * лучX0;
+    let полY = игрок.y + позРяда * лучY0;
 
-      ctx.beginPath(); ctx.ellipse(-14, -10, 7, 6, 0.4, 0, ДВА_ПИ); ctx.fill(); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse( 14, -13, 6.5, 6, -0.4, 0, ДВА_ПИ); ctx.fill(); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(0, 0, 13, 12, 0, 0, ДВА_ПИ); ctx.fill(); ctx.stroke();
+    const строка = y * ШИРИНА_БУФ;
 
-      ctx.strokeStyle = 'rgba(200,230,160,0.5)';
-      ctx.lineWidth = 1;
-      for (let i = 0; i < 8; i++){
-        const a = (i / 8) * ДВА_ПИ + п.seed;
-        ctx.beginPath();
-        ctx.moveTo(Math.cos(a) * 6, Math.sin(a) * 6);
-        ctx.lineTo(Math.cos(a) * 12, Math.sin(a) * 12);
-        ctx.stroke();
+    /* Затемнение к горизонту */
+    const затенение = 1.0 - Math.min(1, p / (ВЫСОТА_БУФ * 0.5)) * 0.3;
+
+    for (let x = 0; x < ШИРИНА_БУФ; x++) {
+      const tx = (Math.floor(РАЗМЕР_ТЕКСТУРЫ * (полX - Math.floor(полX)))) & МАСКА_ТЕКСТУРЫ;
+      const ty = (Math.floor(РАЗМЕР_ТЕКСТУРЫ * (полY - Math.floor(полY)))) & МАСКА_ТЕКСТУРЫ;
+
+      const ц0 = ТЕКСТУРА_ПОЛА[РАЗМЕР_ТЕКСТУРЫ * ty + tx];
+      /* Затенение — просто домножаем каналы */
+      const r0 = (ц0 & 0xff) * затенение;
+      const g0 = ((ц0 >> 8) & 0xff) * затенение;
+      const b0 = ((ц0 >> 16) & 0xff) * затенение;
+      буфер[строка + x] = цвет(r0 | 0, g0 | 0, b0 | 0);
+
+      полX += шагX;
+      полY += шагY;
+    }
+  }
+}
+
+/* ---- СТЕНЫ (raycasting) ---- */
+function нарисоватьСтены() {
+  const dirX = Math.cos(игрок.угол);
+  const dirY = Math.sin(игрок.угол);
+  const плоХ = -dirY * ПЛОСКОСТЬ_X;
+  const плоY =  dirX * ПЛОСКОСТЬ_X;
+
+  for (let x = 0; x < ШИРИНА_БУФ; x++) {
+    const камераX = 2 * x / ШИРИНА_БУФ - 1;
+    const лучX = dirX + плоХ * камераX;
+    const лучY = dirY + плоY * камераX;
+
+    let mapX = Math.floor(игрок.x);
+    let mapY = Math.floor(игрок.y);
+
+    const дельтаX = лучX === 0 ? 1e30 : Math.abs(1 / лучX);
+    const дельтаY = лучY === 0 ? 1e30 : Math.abs(1 / лучY);
+
+    let сторонаX, сторонаY;
+    let шагX, шагY;
+
+    if (лучX < 0) {
+      шагX = -1;
+      сторонаX = (игрок.x - mapX) * дельтаX;
+    } else {
+      шагX = 1;
+      сторонаX = (mapX + 1 - игрок.x) * дельтаX;
+    }
+
+    if (лучY < 0) {
+      шагY = -1;
+      сторонаY = (игрок.y - mapY) * дельтаY;
+    } else {
+      шагY = 1;
+      сторонаY = (mapY + 1 - игрок.y) * дельтаY;
+    }
+
+    let сторона = 0;
+    let клетка = 0;
+    let итераций = 0;
+
+    while (!клетка && итераций < 100) {
+      итераций++;
+      if (сторонаX < сторонаY) {
+        сторонаX += дельтаX;
+        mapX += шагX;
+        сторона = 0;
+      } else {
+        сторонаY += дельтаY;
+        mapY += шагY;
+        сторона = 1;
       }
-      ctx.fillStyle = 'rgba(255,255,255,0.14)';
-      ctx.beginPath(); ctx.arc(-3, -3, 5, 0, ДВА_ПИ); ctx.fill();
+      if (mapX < 0 || mapY < 0 || mapX >= РАЗМЕР_КАРТЫ || mapY >= РАЗМЕР_КАРТЫ) break;
+      клетка = КАРТА[mapY * РАЗМЕР_КАРТЫ + mapX];
+    }
 
-    } else if (п.тип === 'камень'){
-      ctx.fillStyle = '#9a9186';
-      ctx.strokeStyle = '#6f6862';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(0, 0, 12, 0, ДВА_ПИ);
-      ctx.arc(-8, 5, 8, 0, ДВА_ПИ);
-      ctx.arc(8, 4, 7, 0, ДВА_ПИ);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.16)';
-      ctx.beginPath(); ctx.arc(-4, -4, 5, 0, ДВА_ПИ); ctx.fill();
-      ctx.fillStyle = 'rgba(0,0,0,0.15)';
-      ctx.beginPath(); ctx.arc(4, 5, 4, 0, ДВА_ПИ); ctx.fill();
+    if (!клетка) {
+      буферГлубины[x] = 1e30;
+      continue;
+    }
 
-    } else if (п.тип === 'дерево'){
-      ctx.strokeStyle = '#5a4028';
-      ctx.lineWidth = 5;
-      ctx.lineCap = 'round';
-      for (let i = 0; i < 5; i++){
-        const a = (i / 5) * ДВА_ПИ + п.поворот;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(Math.cos(a) * 22, Math.sin(a) * 22);
-        ctx.stroke();
+    /* Перпендикулярное расстояние — убирает «рыбий глаз» */
+    const перпРасст = сторона === 0
+      ? (mapX - игрок.x + (1 - шагX) / 2) / лучX
+      : (mapY - игрок.y + (1 - шагY) / 2) / лучY;
+
+    буферГлубины[x] = перпРасст;
+
+    const высотаЛинии = Math.floor(ВЫСОТА_БУФ / перпРасст);
+
+    let низЭкрана = Math.floor(-высотаЛинии / 2 + ВЫСОТА_БУФ / 2);
+    let верхЭкрана = Math.floor( высотаЛинии / 2 + ВЫСОТА_БУФ / 2);
+
+    if (низЭкрана < 0) низЭкрана = 0;
+    if (верхЭкрана > ВЫСОТА_БУФ) верхЭкрана = ВЫСОТА_БУФ;
+
+    /* Координата текстуры по X */
+    let стенаX = сторона === 0 ? игрок.y + перпРасст * лучY : игрок.x + перпРасст * лучX;
+    стенаX -= Math.floor(стенаX);
+
+    let texX = Math.floor(стенаX * РАЗМЕР_ТЕКСТУРЫ);
+    if (сторона === 0 && лучX > 0) texX = РАЗМЕР_ТЕКСТУРЫ - texX - 1;
+    if (сторона === 1 && лучY < 0) texX = РАЗМЕР_ТЕКСТУРЫ - texX - 1;
+
+    const текстура = ТЕКСТУРЫ[клетка] || ТЕКСТУРЫ[1];
+
+    /* Шаг по текстуре Y */
+    const шагТекстуры = РАЗМЕР_ТЕКСТУРЫ / высотаЛинии;
+    let texPos = (низЭкрана - ВЫСОТА_БУФ / 2 + высотаЛинии / 2) * шагТекстуры;
+
+    /* Затенение боковых стен */
+    const затенение = сторона === 1 ? 0.72 : 1.0;
+    /* Дополнительное затенение по расстоянию */
+    const затенениеРасст = Math.max(0.25, 1 - перпРасст * 0.045);
+
+    for (let y = низЭкрана; y < верхЭкрана; y++) {
+      const texY = texPos & МАСКА_ТЕКСТУРЫ;
+      texPos += шагТекстуры;
+
+      const ц0 = текстура[РАЗМЕР_ТЕКСТУРЫ * texY + texX];
+      const r0 = (ц0 & 0xff) * затенение * затенениеРасст;
+      const g0 = ((ц0 >> 8) & 0xff) * затенение * затенениеРасст;
+      const b0 = ((ц0 >> 16) & 0xff) * затенение * затенениеРасст;
+      буфер[y * ШИРИНА_БУФ + x] = цвет(r0 | 0, g0 | 0, b0 | 0);
+    }
+  }
+}
+
+/* ---- СПРАЙТЫ (враги, кактусы, бочки) ---- */
+function нарисоватьСпрайты() {
+  /* Строим массив с расстоянием */
+  const список = [];
+  for (const с of спрайты) {
+    const dx = с.x - игрок.x;
+    const dy = с.y - игрок.y;
+    с.расст = dx * dx + dy * dy;
+    список.push(с);
+  }
+  /* Сортируем от дальних к ближним */
+  список.sort((a, b) => b.расст - a.расст);
+
+  const dirX = Math.cos(игрок.угол);
+  const dirY = Math.sin(игрок.угол);
+  const плоХ = -dirY * ПЛОСКОСТЬ_X;
+  const плоY =  dirX * ПЛОСКОСТЬ_X;
+
+  /* Определитель матрицы камеры */
+  const invDet = 1.0 / (плоХ * dirY - dirX * плоY);
+
+  for (const с of список) {
+    const спрайтX = с.x - игрок.x;
+    const спрайтY = с.y - игрок.y;
+
+    /* Преобразование в пространство камеры */
+    const transformX = invDet * (dirY * спрайтX - dirX * спрайтY);
+    const transformY = invDet * (-плоY * спрайтX + плоХ * спрайтY);
+
+    if (transformY <= 0.15) continue;
+
+    /* Экранная координата центра спрайта */
+    const экранX = Math.floor((ШИРИНА_БУФ / 2) * (1 + transformX / transformY));
+
+    /* Размеры спрайта */
+    const высотаСпрайта = Math.abs(Math.floor(ВЫСОТА_БУФ / transformY)) * с.масштабY;
+    const ширинаСпрайта = Math.abs(Math.floor(ВЫСОТА_БУФ / transformY)) * (с.ширина / 0.7);
+
+    /* Смещение по вертикали (для высоких спрайтов / на полу) */
+    const смещениеY = Math.floor(с.смещение * высотаСпрайта);
+
+    const верхY = -высотаСпрайта / 2 + ВЫСОТА_БУФ / 2 - смещениеY;
+    const низY  =  высотаСпрайта / 2 + ВЫСОТА_БУФ / 2 - смещениеY;
+
+    let y0 = Math.max(0, Math.floor(верхY));
+    let y1 = Math.min(ВЫСОТА_БУФ, Math.floor(низY));
+
+    let x0 = Math.max(0, Math.floor(экранX - ширинаСпрайта / 2));
+    let x1 = Math.min(ШИРИНА_БУФ, Math.floor(экранX + ширинаСпрайта / 2));
+
+    const текстура = с.текстура;
+    const затенение = Math.max(0.3, 1 - transformY * 0.05);
+    const вспышка = с.вспышка > 0 ? 1 : 0;
+
+    for (let x = x0; x < x1; x++) {
+      /* Проверка перекрытия стеной */
+      if (transformY >= буферГлубины[x]) continue;
+
+      const texX = Math.floor(((x - (экранX - ширинаСпрайта / 2)) / ширинаСпрайта) * РАЗМЕР_ТЕКСТУРЫ);
+      if (texX < 0 || texX >= РАЗМЕР_ТЕКСТУРЫ) continue;
+
+      for (let y = y0; y < y1; y++) {
+        const texY = Math.floor(((y - верхY) / (низY - верхY)) * РАЗМЕР_ТЕКСТУРЫ);
+        if (texY < 0 || texY >= РАЗМЕР_ТЕКСТУРЫ) continue;
+
+        const ц0 = текстура[РАЗМЕР_ТЕКСТУРЫ * texY + texX];
+        const a0 = (ц0 >> 24) & 0xff;
+        if (a0 < 128) continue;
+
+        let r0 = (ц0 & 0xff) * затенение;
+        let g0 = ((ц0 >> 8) & 0xff) * затенение;
+        let b0 = ((ц0 >> 16) & 0xff) * затенение;
+
+        /* Вспышка выстрела врага — подсвечиваем красноватым */
+        if (вспышка) {
+          r0 = Math.min(255, r0 + 60);
+        }
+        /* Вспышка урона — красный оттенок */
+        if (с.уронВспышка > 0) {
+          r0 = Math.min(255, r0 + 80);
+          g0 *= 0.5;
+          b0 *= 0.5;
+        }
+
+        буфер[y * ШИРИНА_БУФ + x] = цвет(r0 | 0, g0 | 0, b0 | 0);
       }
-      ctx.fillStyle = '#6b4c2e';
-      ctx.beginPath(); ctx.arc(0, 0, 8, 0, ДВА_ПИ); ctx.fill();
-      ctx.strokeStyle = '#4a3320'; ctx.lineWidth = 2; ctx.stroke();
-      ctx.fillStyle = 'rgba(255,220,160,0.12)';
-      ctx.beginPath(); ctx.arc(-2, -2, 3, 0, ДВА_ПИ); ctx.fill();
-
-    } else if (п.тип === 'бочка'){
-      ctx.fillStyle = '#8a5a30';
-      ctx.strokeStyle = '#4a2f18';
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(0, 0, 11, 0, ДВА_ПИ); ctx.fill(); ctx.stroke();
-
-      ctx.strokeStyle = '#3a2410';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(0, 0, 7, 0, ДВА_ПИ); ctx.stroke();
-      ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, ДВА_ПИ); ctx.stroke();
-
-      ctx.fillStyle = '#a06c3a';
-      ctx.beginPath(); ctx.arc(-2, -2, 3, 0, ДВА_ПИ); ctx.fill();
-
-      ctx.fillStyle = 'rgba(255,220,160,0.18)';
-      ctx.beginPath(); ctx.arc(-4, -4, 4, 0, ДВА_ПИ); ctx.fill();
     }
-
-    ctx.restore();
   }
-}
 
-/* ---------- ДОМА ---------- */
-function нарисоватьДома(){
-  const x0 = камера.x - 200, y0 = камера.y - 200, x1 = камера.x + Ш + 200, y1 = камера.y + В + 200;
+  /* Частицы (эффекты попадания) рисуем как точки поверх */
+  for (const ч of эффекты) {
+    const спрайтX = ч.x - игрок.x;
+    const спрайтY = ч.y - игрок.y;
+    const transformX = invDet * (dirY * спрайтX - dirX * спрайтY);
+    const transformY = invDet * (-плоY * спрайтX + плоХ * спрайтY);
+    if (transformY <= 0.15) continue;
 
-  for (const д of дома){
-    if (д.x > x1 || д.x + д.w < x0 || д.y > y1 || д.y + д.h < y0) continue;
+    const экранX = Math.floor((ШИРИНА_БУФ / 2) * (1 + transformX / transformY));
+    const экранY = Math.floor(ВЫСОТА_БУФ / 2 + 4 / transformY);
 
-    /* Тень */
-    ctx.fillStyle = 'rgba(0,0,0,0.32)';
-    ctx.fillRect(д.x + 10, д.y + 14, д.w, д.h);
+    /* Размер частицы на экране */
+    const размер = Math.max(1, Math.floor(3 / transformY));
 
-    /* Основа */
-    ctx.fillStyle = д.c;
-    ctx.fillRect(д.x, д.y, д.w, д.h);
+    const a0 = ч.жизнь / ч.макс;
+    const r0 = parseInt(ч.цвет.slice(1, 3), 16);
+    const g0 = parseInt(ч.цвет.slice(3, 5), 16);
+    const b0 = parseInt(ч.цвет.slice(5, 7), 16);
 
-    /* Горизонтальные доски */
-    ctx.strokeStyle = 'rgba(0,0,0,0.22)';
-    ctx.lineWidth = 2;
-    for (let y = д.y + 22; y < д.y + д.h; y += 22){
-      ctx.beginPath();
-      ctx.moveTo(д.x, y);
-      ctx.lineTo(д.x + д.w, y);
-      ctx.stroke();
-    }
-
-    /* Вертикальные стыки */
-    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-    for (let x = д.x + 34; x < д.x + д.w; x += 60){
-      ctx.beginPath();
-      ctx.moveTo(x, д.y);
-      ctx.lineTo(x, д.y + д.h);
-      ctx.stroke();
-    }
-
-    /* Конёк крыши */
-    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(д.x + 10, д.y + д.h / 2);
-    ctx.lineTo(д.x + д.w - 10, д.y + д.h / 2);
-    ctx.stroke();
-
-    /* Тёмная обводка */
-    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(д.x + 1.5, д.y + 1.5, д.w - 3, д.h - 3);
-
-    /* Светлый край сверху */
-    ctx.strokeStyle = 'rgba(255,220,160,0.18)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(д.x + 4, д.y + 4);
-    ctx.lineTo(д.x + д.w - 4, д.y + 4);
-    ctx.stroke();
-
-    /* Дверь / крыльцо */
-    if (д.дверь === 'вниз'){
-      ctx.fillStyle = '#3b2517';
-      ctx.fillRect(д.x + д.w / 2 - 26, д.y + д.h - 20, 52, 20);
-      ctx.fillStyle = 'rgba(255,220,160,0.12)';
-      ctx.fillRect(д.x + д.w / 2 - 26, д.y + д.h - 20, 52, 4);
-      ctx.fillStyle = '#c9a03a';
-      ctx.beginPath();
-      ctx.arc(д.x + д.w / 2 + 16, д.y + д.h - 10, 2, 0, ДВА_ПИ);
-      ctx.fill();
-    } else if (д.дверь === 'вверх'){
-      ctx.fillStyle = '#3b2517';
-      ctx.fillRect(д.x + д.w / 2 - 26, д.y, 52, 20);
-      ctx.fillStyle = 'rgba(255,220,160,0.12)';
-      ctx.fillRect(д.x + д.w / 2 - 26, д.y + 16, 52, 4);
-      ctx.fillStyle = '#c9a03a';
-      ctx.beginPath();
-      ctx.arc(д.x + д.w / 2 + 16, д.y + 10, 2, 0, ДВА_ПИ);
-      ctx.fill();
-    }
-
-    /* Вывеска салуна */
-    if (д.салун){
-      const sx = д.x + д.w / 2 - 60;
-      const sy = д.y + д.h / 2 - 16;
-      ctx.fillStyle = '#3a2212';
-      скругПрямоуг(ctx, sx, sy, 120, 32, 4);
-      ctx.fill();
-      ctx.strokeStyle = '#c9a03a';
-      ctx.lineWidth = 2;
-      скругПрямоуг(ctx, sx, sy, 120, 32, 4);
-      ctx.stroke();
-
-      ctx.fillStyle = '#e8c98a';
-      ctx.font = 'bold 17px Georgia, serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('SALOON', sx + 60, sy + 17);
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'alphabetic';
+    for (let dy = -размер; dy <= размер; dy++) {
+      for (let dx = -размер; dx <= размер; dx++) {
+        const x = экранX + dx;
+        const y = экранY + dy;
+        if (x < 0 || x >= ШИРИНА_БУФ || y < 0 || y >= ВЫСОТА_БУФ) continue;
+        if (transformY >= буферГлубины[x]) continue;
+        const r1 = Math.min(255, r0 * a0 + ((буфер[y * ШИРИНА_БУФ + x] & 0xff) * (1 - a0)));
+        const g1 = Math.min(255, g0 * a0 + (((буфер[y * ШИРИНА_БУФ + x] >> 8) & 0xff) * (1 - a0)));
+        const b1 = Math.min(255, b0 * a0 + (((буфер[y * ШИРИНА_БУФ + x] >> 16) & 0xff) * (1 - a0)));
+        буфер[y * ШИРИНА_БУФ + x] = цвет(r1 | 0, g1 | 0, b1 | 0);
+      }
     }
   }
 }
 
-/* ---------- КОВБОЙ (вид сверху, детализированный) ---------- */
-function нарисоватьКовбоя(x, y, угол, опции){
-  const ЭтоИгрок = опции.этоИгрок;
-  const М = опции.масштаб || 1;
+/* ==========================================================
+   12. ОТРИСОВКА ПОВЕРХ 3D — оружие, HUD, стики
+   ========================================================== */
+function нарисоватьПоверх() {
+  /* Тряска камеры */
+  let тряскаX = 0, тряскаY = 0;
+  if (игрок.тряска > 0) {
+    тряскаX = (Math.random() - 0.5) * игрок.тряска * 4;
+    тряскаY = (Math.random() - 0.5) * игрок.тряска * 4;
+  }
+
+  /* Заливаем фон чёрным и рисуем масштабированное 3D-изображение */
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
+
+  ctx.drawImage(
+    offCanvas,
+    -Ш_ЭКРАНА * 0 + тряскаX,
+    тряскаY,
+    Ш_ЭКРАНА,
+    В_ЭКРАНА
+  );
+
+  /* Меню / Конец — без оружия */
+  if (состояние === 'меню') { нарисоватьМеню(); return; }
+  if (состояние === 'конец') { нарисоватьКонец(); return; }
+
+  /* Оружие (револьвер) */
+  нарисоватьРевольвер();
+
+  /* Прицел */
+  нарисоватьПрицел();
+
+  /* Мини-карта */
+  нарисоватьМиниКарту();
+
+  /* HUD (полоса здоровья, патроны, счёт) */
+  нарисоватьHUD();
+
+  /* Вспышка урона */
+  const вспышка = Math.max(0, (100 - игрок.хп) / 100 - 0.3);
+  if (вспышка > 0) {
+    const гр = ctx.createRadialGradient(Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.min(Ш_ЭКРАНА, В_ЭКРАНА) * 0.2,
+                                          Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.max(Ш_ЭКРАНА, В_ЭКРАНА) * 0.7);
+    гр.addColorStop(0, 'rgba(120,0,0,0)');
+    гр.addColorStop(1, 'rgba(140,10,10,' + (вспышка * 0.9) + ')');
+    ctx.fillStyle = гр;
+    ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
+  }
+
+  /* Эффект Меткого глаза */
+  if (игрок.мгАктивен) {
+    /* Лёгкая тёплая тонировка */
+    ctx.fillStyle = 'rgba(160,120,20,0.08)';
+    ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
+    /* Виньетка жёлто-коричневая */
+    const гр = ctx.createRadialGradient(Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.min(Ш_ЭКРАНА, В_ЭКРАНА) * 0.15,
+                                          Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.max(Ш_ЭКРАНА, В_ЭКРАНА) * 0.6);
+    гр.addColorStop(0, 'rgba(0,0,0,0)');
+    гр.addColorStop(1, 'rgba(50,30,0,0.55)');
+    ctx.fillStyle = гр;
+    ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
+  }
+
+  /* Подсказка в начале */
+  if (таймерПодсказки > 0) {
+    const a = Math.min(1, таймерПодсказки / 0.6);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(240,220,174,0.9)';
+    ctx.font = 'bold 16px Georgia, serif';
+    ctx.textAlign = 'center';
+    const сообщение = ЭТО_ТАЧ
+      ? 'Левый палец — движение · Правый — обзор, тап — выстрел'
+      : 'WASD — движение · Мышь — обзор · ЛКМ — огонь · R — перезарядка · Q — Меткий глаз';
+    ctx.fillText(сообщение, Ш_ЭКРАНА / 2, 60);
+    ctx.textAlign = 'left';
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ---- Револьвер в руках ---- */
+function нарисоватьРевольвер() {
+  const откат = игрок.откатВыстрела > 0 ? (игрок.откатВыстрела / 0.35) * 22 : 0;
+  const покачивание = Math.sin(performance.now() / 300) * 2;
+
+  /* Прицел-центр */
+  const цX = Ш_ЭКРАНА / 2;
+  const цY = В_ЭКРАНА;
 
   ctx.save();
-  ctx.translate(x, y);
+  ctx.translate(цX + 110 + покачивание, цY + 30 + откат);
 
-  /* Тень */
-  ctx.fillStyle = 'rgba(0,0,0,0.32)';
-  ctx.beginPath();
-  ctx.ellipse(4, 6, 22 * М, 15 * М, 0, 0, ДВА_ПИ);
-  ctx.fill();
-
-  ctx.rotate(угол);
-  ctx.scale(М, М);
-
-  const фаза = опции.фазаШага || 0;
-  const качание = Math.sin(фаза) * 2.2;
-
-  /* === НОГИ === */
-  ctx.fillStyle = '#2a1c12';
-  ctx.beginPath(); ctx.ellipse(-13, -8 + качание, 6.5, 4.5, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(-13,  8 - качание, 6.5, 4.5, 0, 0, ДВА_ПИ); ctx.fill();
-
-  ctx.fillStyle = '#3a281a';
-  ctx.beginPath(); ctx.ellipse(-8, -8 + качание, 3, 2.5, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(-8,  8 - качание, 3, 2.5, 0, 0, ДВА_ПИ); ctx.fill();
-
-  /* === ТЕЛО / ПАЛЬТО === */
-  const цветПальто  = ЭтоИгрок ? '#4a3a6b' : '#5c2b22';
-  const цветТёмный  = ЭтоИгрок ? '#2f2449' : '#3d1a15';
-  const цветЖилета  = ЭтоИгрок ? '#3a2d52' : '#7a3020';
-
-  ctx.fillStyle = цветПальто;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 14, 12, 0, 0, ДВА_ПИ);
-  ctx.fill();
-
-  /* Затенение */
-  ctx.fillStyle = 'rgba(0,0,0,0.22)';
-  ctx.beginPath();
-  ctx.ellipse(-2, 0, 12, 11, 0, 0, ДВА_ПИ);
-  ctx.fill();
-
-  /* Блик */
-  ctx.fillStyle = 'rgba(255,255,255,0.10)';
-  ctx.beginPath();
-  ctx.ellipse(4, -3, 9, 5, 0, 0, ДВА_ПИ);
-  ctx.fill();
-
-  /* === ЖИЛЕТ === */
-  ctx.fillStyle = цветЖилета;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 9, 8, 0, 0, ДВА_ПИ);
-  ctx.fill();
-
-  /* Пуговицы */
-  ctx.fillStyle = '#c9a03a';
-  for (let i = -1; i <= 1; i++){
-    ctx.beginPath();
-    ctx.arc(1, i * 3.5, 1.1, 0, ДВА_ПИ);
-    ctx.fill();
-  }
-
-  /* === РЕМЕНЬ === */
-  ctx.strokeStyle = '#2a1a10';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(-6, -10);
-  ctx.lineTo(-6, 10);
-  ctx.stroke();
-
-  ctx.fillStyle = '#c9a03a';
-  ctx.beginPath();
-  ctx.arc(-6, 0, 2.2, 0, ДВА_ПИ);
-  ctx.fill();
-  ctx.fillStyle = '#7a5a20';
-  ctx.beginPath();
-  ctx.arc(-6, 0, 0.9, 0, ДВА_ПИ);
-  ctx.fill();
-
-  /* === РУКИ === */
-  ctx.fillStyle = цветТёмный;
-  ctx.beginPath();
-  ctx.ellipse(10, -7, 4.8, 3.6, 0, 0, ДВА_ПИ);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(10, 7, 4.8, 3.6, 0, 0, ДВА_ПИ);
-  ctx.fill();
-
-  /* Кисти */
-  ctx.fillStyle = '#d9a679';
-  ctx.beginPath(); ctx.arc(13, -7, 2.9, 0, ДВА_ПИ); ctx.fill();
-  ctx.beginPath(); ctx.arc(13,  7, 2.9, 0, ДВА_ПИ); ctx.fill();
-
-  /* === РЕВОЛЬВЕР === */
-  ctx.fillStyle = '#1e1e24';
-  ctx.fillRect(13, -3.5, 14, 4);
-  ctx.fillStyle = '#2c2c36';
-  ctx.fillRect(15, -3, 12, 3);
-  ctx.fillStyle = '#3a3a44';
-  ctx.beginPath(); ctx.arc(17, -1.5, 2.6, 0, ДВА_ПИ); ctx.fill();
-  ctx.fillStyle = '#5a3a20';
-  ctx.beginPath(); ctx.ellipse(14, -1.5, 3, 2.6, 0, 0, ДВА_ПИ); ctx.fill();
-
-  /* Вспышка */
-  if (опции.вспышка > 0){
-    const яв = Math.min(1, опции.вспышка * 10);
-    ctx.fillStyle = 'rgba(255,230,140,' + (яв * 0.9) + ')';
-    ctx.beginPath(); ctx.arc(30, -1.5, 8 * яв, 0, ДВА_ПИ); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,220,' + яв + ')';
-    ctx.beginPath(); ctx.arc(30, -1.5, 4 * яв, 0, ДВА_ПИ); ctx.fill();
-  }
-
-  /* === ГОЛОВА === */
-  ctx.fillStyle = '#c08858';
-  ctx.beginPath(); ctx.arc(2, 0, 6, 0, ДВА_ПИ); ctx.fill();
-
-  ctx.fillStyle = '#d9a679';
-  ctx.beginPath(); ctx.arc(3, 0, 6.5, 0, ДВА_ПИ); ctx.fill();
-
-  ctx.fillStyle = 'rgba(0,0,0,0.14)';
-  ctx.beginPath(); ctx.arc(4.5, 0, 5, 0, ДВА_ПИ); ctx.fill();
-
-  /* === ШЛЯПА === */
-  const поляШляпы  = ЭтоИгрок ? '#3a281a' : '#241408';
-  const тульяШляпы = ЭтоИгрок ? '#4a3524' : '#2f1e10';
-
-  ctx.fillStyle = поляШляпы;
-  ctx.beginPath();
-  ctx.ellipse(3, 0, 10.5, 10, 0, 0, ДВА_ПИ);
-  ctx.fill();
-
+  /* Тень оружия */
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
   ctx.beginPath();
-  ctx.ellipse(4, 0, 9.2, 8.8, 0, 0, ДВА_ПИ);
+  ctx.ellipse(0, 10, 70, 20, 0, 0, ДВА_ПИ);
   ctx.fill();
 
-  ctx.fillStyle = тульяШляпы;
+  /* Ствол */
+  ctx.fillStyle = '#22222a';
+  ctx.fillRect(-110, -34, 90, 12);
+  ctx.fillStyle = '#0f0f14';
+  ctx.fillRect(-110, -26, 90, 4);
+
+  /* Блик на стволе */
+  ctx.fillStyle = 'rgba(220,220,255,0.25)';
+  ctx.fillRect(-108, -32, 86, 2);
+
+  /* Барабан */
+  ctx.fillStyle = '#3a3a44';
   ctx.beginPath();
-  ctx.arc(3, 0, 6, 0, ДВА_ПИ);
+  ctx.ellipse(-16, -28, 14, 14, 0, 0, ДВА_ПИ);
   ctx.fill();
-
-  ctx.fillStyle = 'rgba(255,220,160,0.18)';
-  ctx.beginPath();
-  ctx.arc(2, -2, 3.5, 0, ДВА_ПИ);
-  ctx.fill();
-
-  ctx.strokeStyle = '#1a0f08';
-  ctx.lineWidth = 1.6;
-  ctx.beginPath();
-  ctx.arc(3, 0, 6, 0, ДВА_ПИ);
-  ctx.stroke();
-
-  /* === БАНДАНА у врага === */
-  if (!ЭтоИгрок){
-    ctx.fillStyle = '#b02020';
-    ctx.beginPath();
-    ctx.arc(3, 0, 7.4, Math.PI * 0.10, Math.PI * 0.90);
-    ctx.lineTo(3 + Math.cos(Math.PI * 0.90) * 7.4,
-               0 + Math.sin(Math.PI * 0.90) * 7.4);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = '#8a1818';
-    ctx.beginPath();
-    ctx.arc(9, 0, 2.2, 0, ДВА_ПИ);
-    ctx.fill();
-  }
-
-  ctx.restore();
-}
-
-/* ---------- КОНЬ ---------- */
-function нарисоватьКоня(к){
-  ctx.save();
-  ctx.translate(к.x, к.y);
-
-  ctx.fillStyle = 'rgba(0,0,0,0.30)';
-  ctx.beginPath();
-  ctx.ellipse(4, 8, 32, 16, 0, 0, ДВА_ПИ);
-  ctx.fill();
-
-  ctx.rotate(к.угол);
-
-  const кач = Math.sin(к.фазаШага) * 3.5;
-
-  /* Ноги */
-  ctx.fillStyle = '#4a2f1c';
-  ctx.beginPath(); ctx.ellipse(-12, -10 + кач, 7.5, 5, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(-12,  10 - кач, 7.5, 5, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.beginPath(); ctx.ellipse( 12, -10 - кач, 7.5, 5, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.beginPath(); ctx.ellipse( 12,  10 + кач, 7.5, 5, 0, 0, ДВА_ПИ); ctx.fill();
-
-  /* Копыта */
-  ctx.fillStyle = '#241610';
-  ctx.beginPath(); ctx.ellipse(-16, -10 + кач, 3.5, 3, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(-16,  10 - кач, 3.5, 3, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.beginPath(); ctx.ellipse( 16, -10 - кач, 3.5, 3, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.beginPath(); ctx.ellipse( 16,  10 + кач, 3.5, 3, 0, 0, ДВА_ПИ); ctx.fill();
-
-  /* Хвост */
-  ctx.fillStyle = '#3a2412';
-  ctx.beginPath(); ctx.ellipse(-29, 0, 8, 5.5, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.fillStyle = 'rgba(255,220,160,0.10)';
-  ctx.beginPath(); ctx.ellipse(-30, -1, 4, 2.5, 0, 0, ДВА_ПИ); ctx.fill();
-
-  /* Тело */
-  ctx.fillStyle = '#7a4f2a';
-  ctx.beginPath(); ctx.ellipse(0, 0, 26, 14, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.strokeStyle = '#4a2f1c';
+  ctx.strokeStyle = '#0f0f14';
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  /* Блик */
-  ctx.fillStyle = 'rgba(255,220,160,0.15)';
-  ctx.beginPath(); ctx.ellipse(2, -5, 16, 4, 0, 0, ДВА_ПИ); ctx.fill();
+  /* Камеры барабана */
+  ctx.fillStyle = '#1a1a22';
+  for (let i = 0; i < 6; i++) {
+    const уг = (i / 6) * ДВА_ПИ;
+    ctx.beginPath();
+    ctx.arc(-16 + Math.cos(уг) * 7, -28 + Math.sin(уг) * 7, 2.2, 0, ДВА_ПИ);
+    ctx.fill();
+  }
 
-  /* Шея */
-  ctx.fillStyle = '#7a4f2a';
-  ctx.beginPath(); ctx.ellipse(25, 0, 11, 8, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.stroke();
-
-  /* Голова */
-  ctx.beginPath(); ctx.ellipse(36, 0, 8, 5.5, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.stroke();
-
-  /* Глаз */
-  ctx.fillStyle = '#1a0f08';
-  ctx.beginPath(); ctx.arc(39, -2, 1.4, 0, ДВА_ПИ); ctx.fill();
-  ctx.beginPath(); ctx.arc(39,  2, 1.4, 0, ДВА_ПИ); ctx.fill();
-
-  /* Грива */
-  ctx.fillStyle = '#3a2412';
-  ctx.beginPath(); ctx.ellipse(20, 0, 6.5, 11, 0, 0, ДВА_ПИ); ctx.fill();
-
-  /* Седло */
+  /* Рукоятка */
   ctx.fillStyle = '#5a3a20';
-  ctx.beginPath(); ctx.ellipse(-2, 0, 11, 10, 0, 0, ДВА_ПИ); ctx.fill();
-  ctx.strokeStyle = '#33200f';
-  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(-16, -20);
+  ctx.lineTo(6, -12);
+  ctx.lineTo(16, 22);
+  ctx.lineTo(-2, 30);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#2a1a08';
+  ctx.lineWidth = 2;
   ctx.stroke();
 
-  ctx.fillStyle = '#8a6a3a';
-  ctx.beginPath(); ctx.arc(-2, 11, 2, 0, ДВА_ПИ); ctx.fill();
-  ctx.beginPath(); ctx.arc(-2, -11, 2, 0, ДВА_ПИ); ctx.fill();
+  /* Накладки на рукоятке */
+  ctx.fillStyle = 'rgba(255,220,160,0.15)';
+  ctx.beginPath();
+  ctx.moveTo(-10, -14);
+  ctx.lineTo(0, -8);
+  ctx.lineTo(10, 18);
+  ctx.lineTo(2, 24);
+  ctx.closePath();
+  ctx.fill();
+
+  /* Курок */
+  ctx.fillStyle = '#1a1a22';
+  ctx.fillRect(-32, -40, 6, 14);
+
+  /* Спусковая скоба */
+  ctx.strokeStyle = '#1a1a22';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(-6, -14, 12, Math.PI * 0.1, Math.PI * 0.9, true);
+  ctx.stroke();
+
+  /* Вспышка выстрела */
+  if (игрок.вспышкаСтвола > 0) {
+    const яр = игрок.вспышкаСтвола / 0.10;
+    const гр = ctx.createRadialGradient(-110, -28, 2, -110, -28, 60 * яр);
+    гр.addColorStop(0, 'rgba(255,255,200,' + яр + ')');
+    гр.addColorStop(0.4, 'rgba(255,200,80,' + (яр * 0.7) + ')');
+    гр.addColorStop(1, 'rgba(255,100,20,0)');
+    ctx.fillStyle = гр;
+    ctx.beginPath();
+    ctx.arc(-110, -28, 60 * яр, 0, ДВА_ПИ);
+    ctx.fill();
+
+    /* Оранжевый круг */
+    ctx.fillStyle = 'rgba(255,220,120,' + яр + ')';
+    ctx.beginPath();
+    ctx.arc(-110, -28, 10 * яр, 0, ДВА_ПИ);
+    ctx.fill();
+  }
 
   ctx.restore();
+
+  /* Прицел (по центру) */
+  ctx.strokeStyle = 'rgba(255,246,220,0.85)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(цX - 12, цY / 2); ctx.lineTo(цX - 4, цY / 2);
+  ctx.moveTo(цX + 4, цY / 2); ctx.lineTo(цX + 12, цY / 2);
+  ctx.moveTo(цX, цY / 2 - 12); ctx.lineTo(цX, цY / 2 - 4);
+  ctx.moveTo(цX, цY / 2 + 4); ctx.lineTo(цX, цY / 2 + 12);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,246,220,0.9)';
+  ctx.beginPath();
+  ctx.arc(цX, цY / 2, 2, 0, ДВА_ПИ);
+  ctx.fill();
 }
 
-/* ---------- ВСЕ СУЩНОСТИ ---------- */
-function нарисоватьСущности(){
-  /* Конь */
-  if (конь) нарисоватьКоня(конь);
-
-  /* Враги */
-  for (const в of враги){
-    ctx.save();
-    if (в.урон > 0) ctx.globalAlpha = 0.85;
-
-    нарисоватьКовбоя(в.x, в.y, в.угол, {
-      этоИгрок: false,
-      фазаШага: в.фазаШага,
-      вспышка: в.вспышка,
-      масштаб: 1.0
-    });
-    ctx.restore();
-
-    /* Полоска здоровья */
-    if (в.хп < в.максХп){
-      const w = 32, h = 4;
-      const px = в.x - w / 2, py = в.y - 30;
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.fillRect(px - 1, py - 1, w + 2, h + 2);
-      ctx.fillStyle = '#c0392b';
-      ctx.fillRect(px, py, w * (в.хп / в.максХп), h);
-    }
-
-    /* Метка Меткого глаза */
-    if (игрок.мгАктивен){
-      ctx.strokeStyle = 'rgba(255,240,160,0.9)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(в.x, в.y, 22, 0, ДВА_ПИ);
-      ctx.stroke();
-
-      ctx.strokeStyle = 'rgba(255,240,160,0.5)';
-      ctx.beginPath();
-      ctx.moveTo(в.x - 30, в.y); ctx.lineTo(в.x - 24, в.y);
-      ctx.moveTo(в.x + 24, в.y); ctx.lineTo(в.x + 30, в.y);
-      ctx.stroke();
-    }
-  }
-
-  /* Игрок */
-  if (игрок.хп > 0){
-    нарисоватьКовбоя(игрок.x, игрок.y, игрок.угол, {
-      этоИгрок: true,
-      фазаШага: игрок.фазаШага,
-      вспышка: игрок.откатВыстрела > 0.12 ? 1 : 0,
-      масштаб: 1.15
-    });
-  }
-
-  /* Пули */
-  for (const п of пули){
-    const a = Math.atan2(п.vy, п.vx);
-    const дл = п.дружеская ? 22 : 15;
-
-    ctx.save();
-    ctx.translate(п.x, п.y);
-    ctx.rotate(a);
-
-    const гр = ctx.createLinearGradient(-дл, 0, 6, 0);
-    if (п.дружеская){
-      гр.addColorStop(0, 'rgba(255,235,150,0)');
-      гр.addColorStop(1, 'rgba(255,245,190,1)');
-    } else {
-      гр.addColorStop(0, 'rgba(255,140,60,0)');
-      гр.addColorStop(1, 'rgba(255,190,110,1)');
-    }
-    ctx.fillStyle = гр;
-    ctx.fillRect(-дл, -1.8, дл + 6, 3.6);
-    ctx.restore();
-  }
-
-  /* Частицы */
-  for (const ч of частицы){
-    const a = огр(ч.жизнь / ч.макс, 0, 1);
-    ctx.globalAlpha = a;
-    ctx.fillStyle = ч.цвет;
-    const s = ч.размер * (0.4 + a * 0.6);
-    ctx.fillRect(ч.x - s / 2, ч.y - s / 2, s, s);
-  }
-  ctx.globalAlpha = 1;
-
-  /* Индикатор перезарядки */
-  if (игрок.перезарядка > 0){
-    const прогр = 1 - игрок.перезарядка / 1.35;
-    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.arc(игрок.x, игрок.y - 38, 15, -Math.PI / 2, -Math.PI / 2 + ДВА_ПИ);
-    ctx.stroke();
-
-    ctx.strokeStyle = '#e8c98a';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.arc(игрок.x, игрок.y - 38, 15, -Math.PI / 2, -Math.PI / 2 + ДВА_ПИ * прогр);
-    ctx.stroke();
-  }
-
-  /* Подсказка над конём */
-  if (!игрок.верхом && конь && раст(конь.x, конь.y, игрок.x, игрок.y) < 100){
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    скругПрямоуг(ctx, конь.x - 42, конь.y - 52, 84, 22, 6);
-    ctx.fill();
-    ctx.fillStyle = '#e8c98a';
-    ctx.font = 'bold 12px Georgia, serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(ЭТО_ТАЧ ? 'КОНЬ' : '[ E ] конь', конь.x, конь.y - 37);
-    ctx.textAlign = 'left';
-  }
+/* ---- Прицел для тача (если активен правый стик) ---- */
+function нарисоватьПрицел() {
+  /* Уже нарисован в нарисоватьРевольвер */
 }
 
-/* ==========================================================
-   ИНТЕРФЕЙС
-   ========================================================== */
-
-/* Мини-карта */
-function нарисоватьМиниКарту(){
-  const S = 150;
-  const px = Ш - S - 20;
+/* ---- Мини-карта ---- */
+function нарисоватьМиниКарту() {
+  const S = 140;
+  const px = Ш_ЭКРАНА - S - 20;
   const py = 20;
-  const дальность = 1400;
-  const k = S / (дальность * 2);
+  const дальность = 12;
+  const к = S / (дальность * 2);
   const цx = px + S / 2;
   const цy = py + S / 2;
 
@@ -1818,64 +1817,77 @@ function нарисоватьМиниКарту(){
   ctx.rect(px, py, S, S);
   ctx.clip();
 
-  ctx.fillStyle = 'rgba(22,14,7,0.78)';
+  ctx.fillStyle = 'rgba(22,14,7,0.82)';
   ctx.fillRect(px, py, S, S);
 
-  /* Сетка */
-  ctx.strokeStyle = 'rgba(220,190,140,0.07)';
-  ctx.lineWidth = 1;
-  for (let i = 1; i < 4; i++){
-    ctx.beginPath();
-    ctx.moveTo(px, py + (S * i) / 4); ctx.lineTo(px + S, py + (S * i) / 4);
-    ctx.moveTo(px + (S * i) / 4, py); ctx.lineTo(px + (S * i) / 4, py + S);
-    ctx.stroke();
-  }
+  /* Стены */
+  for (let y = 0; y < РАЗМЕР_КАРТЫ; y++) {
+    for (let x = 0; x < РАЗМЕР_КАРТЫ; x++) {
+      const клетка = КАРТА[y * РАЗМЕР_КАРТЫ + x];
+      if (!клетка) continue;
+      const worldX = x + 0.5;
+      const worldY = y + 0.5;
+      const dx = worldX - игрок.x;
+      const dy = worldY - игрок.y;
+      if (Math.abs(dx) > дальность || Math.abs(dy) > дальность) continue;
 
-  /* Дома */
-  ctx.fillStyle = 'rgba(150,115,72,0.9)';
-  for (const д of дома){
-    const bx = цx + (д.x - игрок.x) * k;
-    const by = цy + (д.y - игрок.y) * k;
-    ctx.fillRect(bx, by, д.w * k, д.h * k);
+      const экX = цx + dx * к;
+      const экY = цy + dy * к;
+
+      let цвет0;
+      if (клетка === 1) цвет0 = 'rgba(150,110,60,0.9)';
+      else if (клетка === 2) цвет0 = 'rgba(140,80,60,0.9)';
+      else if (клетка === 3) цвет0 = 'rgba(120,115,108,0.9)';
+      else if (клетка === 4) цвет0 = 'rgba(200,170,80,0.95)';
+      else цвет0 = 'rgba(150,110,60,0.9)';
+      ctx.fillStyle = цвет0;
+      ctx.fillRect(экX - к * 0.5, экY - к * 0.5, к, к);
+    }
   }
 
   /* Враги */
-  ctx.fillStyle = '#e0503c';
-  for (const в of враги){
-    const ex = цx + (в.x - игрок.x) * k;
-    const ey = цy + (в.y - игрок.y) * k;
-    ctx.beginPath(); ctx.arc(ex, ey, 3.2, 0, ДВА_ПИ); ctx.fill();
-  }
-
-  /* Конь */
-  if (конь && !игрок.верхом){
-    ctx.fillStyle = '#c9a06a';
+  for (const с of спрайты) {
+    if (с.тип !== 'враг') continue;
+    const dx = с.x - игрок.x;
+    const dy = с.y - игрок.y;
+    if (Math.abs(dx) > дальность || Math.abs(dy) > дальность) continue;
+    ctx.fillStyle = '#e0503c';
     ctx.beginPath();
-    ctx.arc(цx + (конь.x - игрок.x) * k, цy + (конь.y - игрок.y) * k, 3.2, 0, ДВА_ПИ);
+    ctx.arc(цx + dx * к, цy + dy * к, 3, 0, ДВА_ПИ);
     ctx.fill();
   }
 
-  /* Игрок */
-  ctx.fillStyle = '#fff6d8';
-  ctx.beginPath(); ctx.arc(цx, цy, 3.8, 0, ДВА_ПИ); ctx.fill();
+  /* Декор — зелёным */
+  for (const с of спрайты) {
+    if (с.тип !== 'кактус' && с.тип !== 'бочка') continue;
+    const dx = с.x - игрок.x;
+    const dy = с.y - игрок.y;
+    if (Math.abs(dx) > дальность || Math.abs(dy) > дальность) continue;
+    ctx.fillStyle = с.тип === 'кактус' ? 'rgba(80,140,80,0.9)' : 'rgba(160,110,60,0.9)';
+    ctx.beginPath();
+    ctx.arc(цx + dx * к, цy + dy * к, 2, 0, ДВА_ПИ);
+    ctx.fill();
+  }
 
-  /* Направление */
-  ctx.strokeStyle = 'rgba(255,246,216,0.75)';
+  /* Игрок и его взгляд */
+  ctx.fillStyle = '#fff6d8';
+  ctx.beginPath();
+  ctx.arc(цx, цy, 4, 0, ДВА_ПИ);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,246,216,0.8)';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(цx, цy);
-  ctx.lineTo(цx + Math.cos(игрок.угол) * 16, цy + Math.sin(игрок.угол) * 16);
+  ctx.lineTo(цx + Math.cos(игрок.угол) * 18, цy + Math.sin(игрок.угол) * 18);
   ctx.stroke();
 
   /* Сектор обзора */
-  ctx.strokeStyle = 'rgba(255,200,120,0.18)';
-  ctx.lineWidth = 1;
+  ctx.fillStyle = 'rgba(255,200,120,0.10)';
   ctx.beginPath();
   ctx.moveTo(цx, цy);
-  ctx.lineTo(цx + Math.cos(игрок.угол - 0.5) * 60, цy + Math.sin(игрок.угол - 0.5) * 60);
-  ctx.moveTo(цx, цy);
-  ctx.lineTo(цx + Math.cos(игрок.угол + 0.5) * 60, цy + Math.sin(игрок.угол + 0.5) * 60);
-  ctx.stroke();
+  ctx.arc(цx, цy, 40, игрок.угол - 0.5, игрок.угол + 0.5);
+  ctx.closePath();
+  ctx.fill();
 
   ctx.restore();
 
@@ -1883,93 +1895,177 @@ function нарисоватьМиниКарту(){
   ctx.strokeStyle = 'rgba(220,190,140,0.55)';
   ctx.lineWidth = 2;
   ctx.strokeRect(px, py, S, S);
-
   ctx.fillStyle = 'rgba(220,190,140,0.7)';
   ctx.font = 'bold 11px Georgia, serif';
   ctx.textAlign = 'left';
   ctx.fillText('КАРТА', px + 5, py - 6);
 }
 
-/* Прицел */
-function нарисоватьПрицел(){
-  let cx, cy;
+/* ---- HUD ---- */
+function нарисоватьHUD() {
+  /* Здоровье */
+  const бw = 250, бh = 14, бx = 26, бy = В_ЭКРАНА - 118;
 
-  if (ЭТО_ТАЧ){
-    if (!стикПрицел.активен) return;
-    const px = игрок.x - камера.x;
-    const py = игрок.y - камера.y;
-    const дл = Math.hypot(стикПрицел.dx, стикПрицел.dy) || 1;
-    const dx = стикПрицел.dx / дл;
-    const dy = стикПрицел.dy / дл;
-    cx = px + dx * 200;
-    cy = py + dy * 200;
-  } else {
-    if (!мышь.есть) return;
-    cx = мышь.x;
-    cy = мышь.y;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(бx - 6, бy - 6, бw + 12, бh + 12);
+
+  ctx.fillStyle = 'rgba(58,20,15,0.9)';
+  ctx.fillRect(бx, бy, бw, бh);
+
+  const шз = бw * (игрок.хп / игрок.максХп);
+  if (шз > 0) {
+    const гр = ctx.createLinearGradient(бx, бy, бx, бy + бh);
+    гр.addColorStop(0, '#e0503c');
+    гр.addColorStop(1, '#8f1d16');
+    ctx.fillStyle = гр;
+    ctx.fillRect(бx, бy, шз, бh);
   }
 
-  ctx.save();
-  if (игрок.мгАктивен){
-    ctx.strokeStyle = 'rgba(255,235,150,0.95)';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(cx, cy, 14, 0, ДВА_ПИ); ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(cx - 24, cy); ctx.lineTo(cx - 9, cy);
-    ctx.moveTo(cx + 9, cy);  ctx.lineTo(cx + 24, cy);
-    ctx.moveTo(cx, cy - 24); ctx.lineTo(cx, cy - 9);
-    ctx.moveTo(cx, cy + 9);  ctx.lineTo(cx, cy + 24);
-    ctx.stroke();
-  } else {
-    ctx.strokeStyle = 'rgba(255,246,220,0.88)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx - 16, cy); ctx.lineTo(cx - 5, cy);
-    ctx.moveTo(cx + 5, cy);  ctx.lineTo(cx + 16, cy);
-    ctx.moveTo(cx, cy - 16); ctx.lineTo(cx, cy - 5);
-    ctx.moveTo(cx, cy + 5);  ctx.lineTo(cx, cy + 16);
-    ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, ДВА_ПИ);
-    ctx.fillStyle = 'rgba(255,246,220,0.9)';
-    ctx.fill();
+  ctx.strokeStyle = 'rgba(230,200,150,0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(бx, бy, бw, бh);
+  ctx.fillStyle = 'rgba(240,220,174,0.7)';
+  ctx.font = 'bold 11px Georgia, serif';
+  ctx.fillText('ЗДОРОВЬЕ', бx + 2, бy - 8);
+
+  /* Меткий глаз */
+  const дy = бy + бh + 16, дh = 9;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(бx - 6, дy - 6, бw + 12, дh + 12);
+  ctx.fillStyle = 'rgba(48,36,14,0.9)';
+  ctx.fillRect(бx, дy, бw, дh);
+  const шд = бw * игрок.меткийГлаз;
+  if (шд > 0) {
+    ctx.fillStyle = игрок.мгАктивен ? '#fff2b0' : '#d8a83a';
+    ctx.fillRect(бx, дy, шд, дh);
   }
-  ctx.restore();
+  ctx.strokeStyle = 'rgba(230,200,150,0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(бx, дy, бw, дh);
+  ctx.fillStyle = 'rgba(240,220,174,0.7)';
+  ctx.fillText('МЕТКИЙ ГЛАЗ', бx + 2, дy - 6);
+
+  /* Патроны */
+  ctx.font = 'bold 30px Georgia, serif';
+  ctx.fillStyle = игрок.патроны > 0 ? '#f0dcae' : '#c0392b';
+  ctx.fillText(игрок.патроны + ' / ' + игрок.запас, бx, дy + дh + 40);
+  ctx.font = 'bold 11px Georgia, serif';
+  ctx.fillStyle = 'rgba(240,220,174,0.55)';
+  ctx.fillText('ПАТРОНЫ', бx + 2, дy + дh + 54);
+
+  /* Счёт */
+  ctx.textAlign = 'right';
+  ctx.font = 'bold 24px Georgia, serif';
+  ctx.fillStyle = '#f0dcae';
+  ctx.fillText('$ ' + счёт, Ш_ЭКРАНА - 26, 190);
+  ctx.font = '13px Georgia, serif';
+  ctx.fillStyle = 'rgba(240,220,174,0.65)';
+  ctx.fillText('Убито: ' + убийств, Ш_ЭКРАНА - 26, 210);
+  ctx.fillText('Время: ' + Math.floor(время) + 'с', Ш_ЭКРАНА - 26, 228);
+  ctx.textAlign = 'left';
+
+  /* Индикатор перезарядки по центру */
+  if (игрок.перезарядка > 0) {
+    const прогр = 1 - игрок.перезарядка / 1.6;
+    const цx = Ш_ЭКРАНА / 2;
+    const цy = В_ЭКРАНА / 2 + 40;
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.arc(цx, цy, 20, -Math.PI / 2, -Math.PI / 2 + ДВА_ПИ);
+    ctx.stroke();
+    ctx.strokeStyle = '#e8c98a';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(цx, цy, 20, -Math.PI / 2, -Math.PI / 2 + ДВА_ПИ * прогр);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(240,220,174,0.9)';
+    ctx.font = 'bold 12px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('ПЕРЕЗАРЯДКА', цx, цy + 42);
+    ctx.textAlign = 'left';
+  }
+
+  /* Стики и кнопки — только на тач */
+  if (ЭТО_ТАЧ) {
+    нарисоватьКнопкиТач();
+    нарисоватьСтик(левыйСтик, 'rgba(220,190,140,0.55)');
+    /* Правый стик показываем только когда активен — с индикацией прицела */
+    if (правыйСтик.активен) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(220,120,60,0.55)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(правыйСтик.ox, правыйСтик.oy, 40, 0, ДВА_ПИ);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(220,120,60,0.5)';
+      ctx.beginPath();
+      ctx.arc(правыйСтик.ox, правыйСтик.oy, 12, 0, ДВА_ПИ);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
 }
 
-/* Виртуальный стик */
-function нарисоватьСтик(ст, цвет){
+/* ---- Кнопки тача ---- */
+function нарисоватьКнопкиТач() {
+  for (const к of кнопки) {
+    const x = к.x(), y = к.y(), r = к.r;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.arc(x, y + 2, r + 2, 0, ДВА_ПИ); ctx.fill();
+
+    const гр = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, 2, x, y, r);
+    гр.addColorStop(0, к.цвет);
+    гр.addColorStop(1, 'rgba(40,25,12,0.9)');
+    ctx.fillStyle = гр;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, ДВА_ПИ); ctx.fill();
+
+    ctx.strokeStyle = 'rgba(220,190,140,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, ДВА_ПИ); ctx.stroke();
+
+    ctx.fillStyle = '#f0dcae';
+    ctx.font = 'bold 13px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(к.метка, x, y + 1);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
+}
+
+/* ---- Стик ---- */
+function нарисоватьСтик(ст, цвет_ст) {
   if (!ст.активен) return;
   const { ox, oy, x, y } = ст;
 
   ctx.save();
-
-  /* База */
   ctx.fillStyle = 'rgba(20,12,6,0.30)';
   ctx.beginPath(); ctx.arc(ox, oy, РАДИУС_СТИКА, 0, ДВА_ПИ); ctx.fill();
   ctx.strokeStyle = 'rgba(220,190,140,0.35)';
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(ox, oy, РАДИУС_СТИКА, 0, ДВА_ПИ); ctx.stroke();
 
-  /* Ручка */
   const dx = x - ox, dy = y - oy;
   const дл = Math.hypot(dx, dy);
   const макс = РАДИУС_СТИКА;
   let кx, кy;
-  if (дл > макс){
+  if (дл > макс) {
     кx = ox + dx / дл * макс;
     кy = oy + dy / дл * макс;
   } else {
     кx = x; кy = y;
   }
 
-  /* Свечение */
-  const гр = ctx.createRadialGradient(кx, кy, 2, кx, кy, 28);
-  гр.addColorStop(0, цвет);
+  const гр = ctx.createRadialGradient(кx, кy, 2, кx, кy, 30);
+  гр.addColorStop(0, цвет_ст);
   гр.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = гр;
-  ctx.beginPath(); ctx.arc(кx, кy, 28, 0, ДВА_ПИ); ctx.fill();
+  ctx.beginPath(); ctx.arc(кx, кy, 30, 0, ДВА_ПИ); ctx.fill();
 
-  /* Кружок */
   ctx.fillStyle = 'rgba(240,220,174,0.85)';
   ctx.beginPath(); ctx.arc(кx, кy, 20, 0, ДВА_ПИ); ctx.fill();
   ctx.strokeStyle = 'rgba(90,60,25,0.8)';
@@ -1979,316 +2075,126 @@ function нарисоватьСтик(ст, цвет){
   ctx.restore();
 }
 
-/* Кнопки действий */
-function нарисоватьКнопки(){
-  for (const к of кнопкиДействий){
-    const x = к.x(), y = к.y(), r = к.r;
+/* ---- Меню ---- */
+function нарисоватьМеню() {
+  ctx.fillStyle = 'rgba(14,9,5,0.85)';
+  ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
 
-    ctx.save();
-
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.beginPath(); ctx.arc(x, y + 2, r + 2, 0, ДВА_ПИ); ctx.fill();
-
-    const гр = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, 2, x, y, r);
-    if (к.нажата){
-      гр.addColorStop(0, '#f0dcae');
-      гр.addColorStop(1, к.цвет);
-    } else {
-      гр.addColorStop(0, к.цвет);
-      гр.addColorStop(1, 'rgba(40,25,12,0.9)');
-    }
-    ctx.fillStyle = гр;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, ДВА_ПИ); ctx.fill();
-
-    ctx.strokeStyle = 'rgba(220,190,140,0.6)';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, ДВА_ПИ); ctx.stroke();
-
-    ctx.fillStyle = к.нажата ? '#3a2212' : '#f0dcae';
-    ctx.font = 'bold ' + (r > 34 ? 14 : 12) + 'px Georgia, serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(к.метка, x, y + 1);
-    ctx.textBaseline = 'alphabetic';
-    ctx.textAlign = 'left';
-
-    ctx.restore();
-  }
-}
-
-/* Основной HUD */
-function нарисоватьHUD(){
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-
-  if (состояние === 'меню'){ нарисоватьМеню(); return; }
-  if (состояние === 'конец'){ нарисоватьКонец(); return; }
-
-  /* --- Здоровье --- */
-  const бw = 250, бh = 15, бx = 26, бy = В - 118;
-
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  скругПрямоуг(ctx, бx - 6, бy - 6, бw + 12, бh + 12, 8); ctx.fill();
-
-  ctx.fillStyle = 'rgba(58,20,15,0.9)';
-  скругПрямоуг(ctx, бx, бy, бw, бh, 5); ctx.fill();
-
-  const шз = бw * огр(игрок.хп / игрок.максХп, 0, 1);
-  if (шз > 0.5){
-    const гр = ctx.createLinearGradient(бx, бy, бx, бy + бh);
-    гр.addColorStop(0, '#e0503c');
-    гр.addColorStop(1, '#8f1d16');
-    ctx.fillStyle = гр;
-    скругПрямоуг(ctx, бx, бy, шз, бh, 5); ctx.fill();
-  }
-
-  ctx.strokeStyle = 'rgba(230,200,150,0.35)';
-  ctx.lineWidth = 1.5;
-  скругПрямоуг(ctx, бx, бy, бw, бh, 5); ctx.stroke();
-
-  ctx.fillStyle = 'rgba(240,220,174,0.7)';
-  ctx.font = 'bold 11px Georgia, serif';
-  ctx.fillText('ЗДОРОВЬЕ', бx + 2, бy - 10);
-
-  /* --- Меткий глаз --- */
-  const дy = бy + бh + 18, дh = 9;
-
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  скругПрямоуг(ctx, бx - 6, дy - 6, бw + 12, дh + 12, 8); ctx.fill();
-
-  ctx.fillStyle = 'rgba(48,36,14,0.9)';
-  скругПрямоуг(ctx, бx, дy, бw, дh, 5); ctx.fill();
-
-  const шд = бw * огр(игрок.меткийГлаз, 0, 1);
-  if (шд > 0.5){
-    ctx.fillStyle = игрок.мгАктивен ? '#fff2b0' : '#d8a83a';
-    скругПрямоуг(ctx, бx, дy, шд, дh, 5); ctx.fill();
-  }
-
-  ctx.strokeStyle = 'rgba(230,200,150,0.35)';
-  ctx.lineWidth = 1.5;
-  скругПрямоуг(ctx, бx, дy, бw, дh, 5); ctx.stroke();
-
-  ctx.fillStyle = 'rgba(240,220,174,0.7)';
-  ctx.fillText('МЕТКИЙ ГЛАЗ', бx + 2, дy - 8);
-
-  /* --- Патроны --- */
-  ctx.font = 'bold 30px Georgia, serif';
-  ctx.fillStyle = игрок.патроны > 0 ? '#f0dcae' : '#c0392b';
-  ctx.fillText(игрок.патроны + ' / ' + игрок.запас, бx, дy + дh + 40);
-
-  ctx.font = 'bold 11px Georgia, serif';
-  ctx.fillStyle = 'rgba(240,220,174,0.55)';
-  ctx.fillText('ПАТРОНЫ', бx + 2, дy + дh + 56);
-
-  /* --- Счёт --- */
-  ctx.textAlign = 'right';
-  ctx.font = 'bold 26px Georgia, serif';
-  ctx.fillStyle = '#f0dcae';
-  ctx.fillText('$ ' + счёт, Ш - 26, 208);
-
-  ctx.font = '13px Georgia, serif';
-  ctx.fillStyle = 'rgba(240,220,174,0.65)';
-  ctx.fillText('Убито: ' + убийств, Ш - 26, 228);
-  ctx.fillText('Время: ' + Math.floor(время) + 'с', Ш - 26, 246);
-
-  ctx.textAlign = 'left';
-
-  /* --- Первая подсказка --- */
-  if (таймерПодсказки > 0 && состояние === 'игра'){
-    const a = Math.min(1, таймерПодсказки / 0.6);
-    ctx.globalAlpha = a;
-
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 16px Georgia, serif';
-    ctx.fillStyle = 'rgba(240,220,174,0.9)';
-    const сообщение = ЭТО_ТАЧ
-      ? 'Левый палец — движение · Правый — прицел и огонь'
-      : 'WASD — движение · Мышь — прицел · ЛКМ — огонь';
-    ctx.fillText(сообщение, Ш / 2, 60);
-
-    ctx.globalAlpha = 1;
-    ctx.textAlign = 'left';
-  }
-
-  нарисоватьМиниКарту();
-
-  /* Кнопки и стики — только на тач-устройствах */
-  if (ЭТО_ТАЧ){
-    нарисоватьКнопки();
-    нарисоватьСтик(стикДвижение, 'rgba(220,190,140,0.55)');
-    нарисоватьСтик(стикПрицел,   'rgba(220,120,60,0.60)');
-  }
-
-  нарисоватьПрицел();
-
-  /* --- Виньетка --- */
-  const вг = ctx.createRadialGradient(
-    Ш / 2, В / 2, Math.min(Ш, В) * 0.35,
-    Ш / 2, В / 2, Math.max(Ш, В) * 0.75
-  );
-  вг.addColorStop(0, 'rgba(0,0,0,0)');
-  вг.addColorStop(1, 'rgba(0,0,0,0.58)');
-  ctx.fillStyle = вг;
-  ctx.fillRect(0, 0, Ш, В);
-
-  /* --- Красная вспышка при уроне --- */
-  if (вспышкаУрона > 0){
-    ctx.fillStyle = 'rgba(160,20,20,' + (вспышкаУрона * 0.9) + ')';
-    ctx.fillRect(0, 0, Ш, В);
-  }
-
-  /* --- Эффект Меткого глаза --- */
-  if (игрок.мгАктивен){
-    ctx.fillStyle = 'rgba(120,90,20,0.10)';
-    ctx.fillRect(0, 0, Ш, В);
-
-    const вг2 = ctx.createRadialGradient(
-      Ш / 2, В / 2, Math.min(Ш, В) * 0.15,
-      Ш / 2, В / 2, Math.max(Ш, В) * 0.62
-    );
-    вг2.addColorStop(0, 'rgba(0,0,0,0)');
-    вг2.addColorStop(1, 'rgba(40,20,0,0.6)');
-    ctx.fillStyle = вг2;
-    ctx.fillRect(0, 0, Ш, В);
-  }
-
-  ctx.textAlign = 'left';
-}
-
-/* ---------- МЕНЮ ---------- */
-function нарисоватьМеню(){
-  ctx.fillStyle = 'rgba(14,9,5,0.9)';
-  ctx.fillRect(0, 0, Ш, В);
-
-  const гр = ctx.createRadialGradient(Ш / 2, В / 2, 50, Ш / 2, В / 2, Math.max(Ш, В) * 0.85);
-  гр.addColorStop(0, 'rgba(90,60,25,0.38)');
-  гр.addColorStop(1, 'rgba(0,0,0,0.88)');
+  const гр = ctx.createRadialGradient(Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, 50, Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.max(Ш_ЭКРАНА, В_ЭКРАНА) * 0.85);
+  гр.addColorStop(0, 'rgba(90,60,25,0.35)');
+  гр.addColorStop(1, 'rgba(0,0,0,0.9)');
   ctx.fillStyle = гр;
-  ctx.fillRect(0, 0, Ш, В);
+  ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
 
   ctx.textAlign = 'center';
 
   ctx.fillStyle = '#e8c98a';
-  ctx.font = 'bold ' + Math.min(68, Ш / 12) + 'px Georgia, serif';
-  ctx.fillText('RED DEAD CANVAS', Ш / 2, В / 2 - 130);
+  ctx.font = 'bold ' + Math.min(64, Ш_ЭКРАНА / 12) + 'px Georgia, serif';
+  ctx.fillText('RED DEAD 3D', Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 - 130);
 
   ctx.fillStyle = 'rgba(232,201,138,0.55)';
-  ctx.font = Math.min(20, Ш / 32) + 'px Georgia, serif';
-  ctx.fillText('— вестерн от третьего лица —', Ш / 2, В / 2 - 88);
+  ctx.font = Math.min(20, Ш_ЭКРАНА / 32) + 'px Georgia, serif';
+  ctx.fillText('— вестерн от первого лица —', Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 - 88);
 
-  /* Управление */
   ctx.fillStyle = 'rgba(232,220,190,0.88)';
-  ctx.font = Math.min(16, Ш / 48) + 'px Georgia, serif';
+  ctx.font = Math.min(16, Ш_ЭКРАНА / 48) + 'px Georgia, serif';
 
   const строки = ЭТО_ТАЧ ? [
     'Левый палец — виртуальный стик движения',
-    'Правый палец — прицел и автоматический огонь',
-    'Кнопки справа: ПЕР — перезарядка, ГЛАЗ — Меткий глаз, КОНЬ — оседлать'
+    'Правый палец — обзор, тап — выстрел',
+    'Кнопки: ПЕР — перезарядка, ГЛАЗ — Меткий глаз, БЕГ — бег'
   ] : [
-    'WASD — движение        Мышь — прицел        ЛКМ — огонь',
-    'R — перезарядка        Q — Меткий глаз      E — оседлать коня',
-    'Shift — бег            Выживай как можно дольше'
+    'WASD — движение        Мышь — обзор        ЛКМ — огонь',
+    'R — перезарядка        Q — Меткий глаз    Shift — бег',
+    'Целься мышью в центр экрана — там летят пули'
   ];
 
   строки.forEach((т, i) => {
-    ctx.fillText(т, Ш / 2, В / 2 - 20 + i * 32);
+    ctx.fillText(т, Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 - 20 + i * 32);
   });
 
   const пульс = 0.55 + Math.sin(performance.now() / 350) * 0.45;
   ctx.fillStyle = 'rgba(255,225,150,' + пульс + ')';
-  ctx.font = 'bold ' + Math.min(24, Ш / 30) + 'px Georgia, serif';
-  ctx.fillText(ЭТО_ТАЧ ? 'КОСНИСЬ ЭКРАНА, ЧТОБЫ НАЧАТЬ' : 'НАЖМИ ПРОБЕЛ ИЛИ ЛКМ',
-               Ш / 2, В / 2 + 150);
+  ctx.font = 'bold ' + Math.min(24, Ш_ЭКРАНА / 30) + 'px Georgia, serif';
+  ctx.fillText(ЭТО_ТАЧ ? 'КОСНИСЬ ЭКРАНА, ЧТОБЫ НАЧАТЬ' : 'КЛИКНИ ИЛИ ПРОБЕЛ — НАЧАТЬ',
+               Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 + 150);
 
   ctx.textAlign = 'left';
 }
 
-/* ---------- ЭКРАН СМЕРТИ ---------- */
-function нарисоватьКонец(){
-  ctx.fillStyle = 'rgba(30,4,4,0.75)';
-  ctx.fillRect(0, 0, Ш, В);
+/* ---- Конец игры ---- */
+function нарисоватьКонец() {
+  ctx.fillStyle = 'rgba(30,4,4,0.72)';
+  ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
 
   ctx.textAlign = 'center';
 
   ctx.fillStyle = '#c0392b';
-  ctx.font = 'bold ' + Math.min(72, Ш / 10) + 'px Georgia, serif';
-  ctx.fillText('ТЫ ПОГИБ', Ш / 2, В / 2 - 80);
+  ctx.font = 'bold ' + Math.min(72, Ш_ЭКРАНА / 10) + 'px Georgia, serif';
+  ctx.fillText('ТЫ ПОГИБ', Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 - 80);
 
   ctx.fillStyle = '#e8c98a';
   ctx.font = 'bold 30px Georgia, serif';
-  ctx.fillText('$ ' + счёт, Ш / 2, В / 2 + 6);
+  ctx.fillText('$ ' + счёт, Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 + 6);
 
   ctx.fillStyle = 'rgba(232,220,190,0.85)';
-  ctx.font = Math.min(18, Ш / 44) + 'px Georgia, serif';
-  ctx.fillText('Врагов уложено: ' + убийств, Ш / 2, В / 2 + 48);
-  ctx.fillText('Продержался: ' + Math.floor(время) + ' секунд', Ш / 2, В / 2 + 76);
+  ctx.font = Math.min(18, Ш_ЭКРАНА / 44) + 'px Georgia, serif';
+  ctx.fillText('Врагов уложено: ' + убийств, Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 + 48);
+  ctx.fillText('Продержался: ' + Math.floor(время) + ' секунд', Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 + 76);
 
   const пульс = 0.55 + Math.sin(performance.now() / 350) * 0.45;
   ctx.fillStyle = 'rgba(255,225,150,' + пульс + ')';
-  ctx.font = 'bold ' + Math.min(22, Ш / 36) + 'px Georgia, serif';
+  ctx.font = 'bold ' + Math.min(22, Ш_ЭКРАНА / 36) + 'px Georgia, serif';
   ctx.fillText(ЭТО_ТАЧ ? 'КОСНИСЬ ЭКРАНА — НАЧАТЬ ЗАНОВО' : 'НАЖМИ  R  ЧТОБЫ НАЧАТЬ ЗАНОВО',
-               Ш / 2, В / 2 + 150);
+               Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 + 150);
 
   ctx.textAlign = 'left';
 }
 
 /* ==========================================================
-   ОТРИСОВКА
+   13. ГЛАВНЫЙ ЦИКЛ
    ========================================================== */
-function отрисовать(){
-  ctx.setTransform(ТЧ, 0, 0, ТЧ, 0, 0);
-  ctx.clearRect(0, 0, Ш, В);
+let последнийКадр = performance.now();
 
-  const сх = тряска > 0 ? случ(-тряска, тряска) : 0;
-  const сy = тряска > 0 ? случ(-тряска, тряска) : 0;
-
-  ctx.save();
-  ctx.translate(-камера.x + сх, -камера.y + сy);
-
-  нарисоватьЗемлю();
-  нарисоватьОбъекты();
-  нарисоватьДома();
-  нарисоватьСущности();
-
-  ctx.restore();
-
-  нарисоватьHUD();
-}
-
-/* ==========================================================
-   ГЛАВНЫЙ ЦИКЛ
-   ========================================================== */
-function цикл(t){
+function цикл(t) {
   let dt = (t - последнийКадр) / 1000;
   последнийКадр = t;
   if (dt > 0.05) dt = 0.05;
   if (dt < 0) dt = 0;
 
   обновить(dt);
-  отрисовать();
+
+  if (состояние === 'игра' || состояние === 'конец' || состояние === 'меню') {
+    /* В меню и в конце рисуем 3D-вид в фоне */
+    отрисоватьКадр();
+  }
+
+  нарисоватьПоверх();
 
   requestAnimationFrame(цикл);
 }
 
 /* ==========================================================
-   СТАРТ
+   14. СТАРТ
    ========================================================== */
-построитьТекстуруЗемли();
-построитьМир();
-обновитьКамеру(true);
-requestAnimationFrame(цикл);
+/* Пробуем включить звук при первом взаимодействии */
+function включитьЗвук() {
+  /* Заглушка — в этой версии звук не используется */
+}
 
-/* Скрываем адресную строку при первом касании (iOS) */
-window.addEventListener('touchstart', function однажды(){
+/* Скрываем адресную строку iOS */
+window.addEventListener('touchstart', function однажды() {
   window.removeEventListener('touchstart', однажды);
   window.scrollTo(0, 1);
 }, { passive: true });
 
-/* Предотвращаем случайный зум двумя пальцами */
+/* Запрет случайного зума двумя пальцами */
 document.addEventListener('gesturestart', e => e.preventDefault());
 document.addEventListener('gesturechange', e => e.preventDefault());
 document.addEventListener('gestureend', e => e.preventDefault());
+
+/* Запуск */
+requestAnimationFrame(цикл);
 </script>
 </body>
 </html>
