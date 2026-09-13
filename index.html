@@ -1,0 +1,1605 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Red Dead Canvas — вестерн в браузере</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:#140d07}
+  canvas{display:block;cursor:crosshair}
+  #hint{
+    position:fixed;left:0;right:0;bottom:10px;text-align:center;
+    color:#e8d5b0;font:13px Georgia,serif;opacity:.45;pointer-events:none;
+    text-shadow:0 2px 6px #000;letter-spacing:.5px
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hint">WASD — движение · Мышь — прицел · ЛКМ — огонь · R — перезарядка · Q — Dead Eye · E — конь · Shift — бег</div>
+
+<script>
+'use strict';
+
+/* ==========================================================
+   RED DEAD CANVAS
+   Один файл. Никаких ассетов. Всё рисуется кодом.
+   ========================================================== */
+
+/* ---------- CANVAS ---------- */
+const cv  = document.getElementById('game');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  cv.width  = Math.floor(W * DPR);
+  cv.height = Math.floor(H * DPR);
+  cv.style.width  = W + 'px';
+  cv.style.height = H + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ---------- УТИЛИТЫ ---------- */
+const TAU   = Math.PI * 2;
+const rand  = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+const dist  = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+
+function rr(c, x, y, w, h, r){
+  r = Math.min(r, w * 0.5, h * 0.5);
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y,     x + w, y + h, r);
+  c.arcTo(x + w, y + h, x,     y + h, r);
+  c.arcTo(x,     y + h, x,     y,     r);
+  c.arcTo(x,     y,     x + w, y,     r);
+  c.closePath();
+}
+
+/* ---------- ЗВУК (WebAudio, без файлов) ---------- */
+let AC = null, noiseBuf = null;
+
+function initAudio(){
+  if (AC) return;
+  try{
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    const len = Math.floor(AC.sampleRate * 0.5);
+    noiseBuf = AC.createBuffer(1, len, AC.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  }catch(e){ AC = null; }
+}
+
+function sfxShot(vol){
+  if (!AC) return;
+  const t = AC.currentTime;
+
+  const src = AC.createBufferSource();
+  src.buffer = noiseBuf;
+  src.playbackRate.value = 1.6;
+
+  const f = AC.createBiquadFilter();
+  f.type = 'lowpass';
+  f.frequency.setValueAtTime(2400, t);
+  f.frequency.exponentialRampToValueAtTime(180, t + 0.13);
+
+  const g = AC.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+
+  src.connect(f); f.connect(g); g.connect(AC.destination);
+  src.start(t); src.stop(t + 0.22);
+
+  // низкий "бум"
+  const o = AC.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(190, t);
+  o.frequency.exponentialRampToValueAtTime(45, t + 0.1);
+  const og = AC.createGain();
+  og.gain.setValueAtTime(vol * 1.1, t);
+  og.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+  o.connect(og); og.connect(AC.destination);
+  o.start(t); o.stop(t + 0.18);
+}
+
+function sfxHit(){
+  if (!AC) return;
+  const t = AC.currentTime;
+  const src = AC.createBufferSource();
+  src.buffer = noiseBuf;
+  src.playbackRate.value = 0.5;
+  const f = AC.createBiquadFilter();
+  f.type = 'lowpass'; f.frequency.value = 500;
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.25, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+  src.connect(f); f.connect(g); g.connect(AC.destination);
+  src.start(t); src.stop(t + 0.3);
+}
+
+function sfxClick(freq, vol, dur){
+  if (!AC) return;
+  const t = AC.currentTime;
+  const o = AC.createOscillator();
+  o.type = 'square';
+  o.frequency.setValueAtTime(freq, t);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(AC.destination);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+
+function sfxReload(){ sfxClick(320, 0.10, 0.06); setTimeout(()=>sfxClick(220,0.10,0.07), 160); }
+
+function sfxDeadEye(){
+  if (!AC) return;
+  const t = AC.currentTime;
+  const o = AC.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(900, t);
+  o.frequency.exponentialRampToValueAtTime(180, t + 0.6);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.14, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.65);
+  o.connect(g); g.connect(AC.destination);
+  o.start(t); o.stop(t + 0.7);
+}
+
+function sfxWhistle(){
+  if (!AC) return;
+  const t = AC.currentTime;
+  const o = AC.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(700, t);
+  o.frequency.exponentialRampToValueAtTime(1500, t + 0.12);
+  o.frequency.exponentialRampToValueAtTime(600, t + 0.3);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.10, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+  o.connect(g); g.connect(AC.destination);
+  o.start(t); o.stop(t + 0.4);
+}
+
+/* ---------- ВВОД ---------- */
+const keys  = Object.create(null);
+const mouse = { x: 0, y: 0, down: false };
+
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+
+  if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+
+  if (e.code === 'KeyQ') toggleDeadEye();
+  if (e.code === 'KeyE') toggleHorse();
+  if (e.code === 'KeyR'){
+    if (state === 'over') startGame();
+    else startReload();
+  }
+  if (e.code === 'Space' && state === 'menu') startGame();
+});
+
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+cv.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+
+cv.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  initAudio();
+  if (AC && AC.state === 'suspended') AC.resume();
+  if (state === 'menu' || state === 'over'){ startGame(); return; }
+  mouse.down = true;
+});
+
+window.addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; });
+cv.addEventListener('contextmenu', e => e.preventDefault());
+
+/* ==========================================================
+   МИР
+   ========================================================== */
+const WORLD = { w: 4200, h: 4200 };
+const CX = 2100, CY = 2100;
+
+let buildings = [];
+let props     = [];
+let specks    = [];
+let patches   = [];
+
+const cam = { x: 0, y: 0 };
+
+/* ---- Генерация ---- */
+function buildWorld(){
+  buildings = [];
+  props     = [];
+  specks    = [];
+  patches   = [];
+
+  // --- Город: два ряда домов вдоль главной улицы ---
+  const cols   = [CX-960, CX-640, CX-320, CX, CX+320, CX+640];
+  const topC   = ['#7c5233','#6d4a2e','#8a5c3a','#6b4327','#7a4f30','#86583a'];
+  const botC   = ['#6b4327','#7a4f30','#6d4a2e','#86583a','#7c5233','#8a5c3a'];
+
+  for (let i = 0; i < cols.length; i++){
+    buildings.push({ x: cols[i], y: CY-460, w: 280, h: 220, c: topC[i], door: 'down' });
+    buildings.push({ x: cols[i], y: CY+240, w: 280, h: 220, c: botC[i], door: 'up'   });
+  }
+
+  // Салон в центре улицы — просто большой дом-акцент
+  buildings.push({ x: CX-140, y: CY-120, w: 280, h: 240, c: '#8f5d33', door: 'none' });
+
+  // Пара дальних построек для атмосферы
+  const far = [
+    { x: CX-1500, y: CY-1100, w: 240, h: 180, c: '#6d4a2e', door: 'down' },
+    { x: CX+1200, y: CY+ 900, w: 220, h: 170, c: '#7a4f30', door: 'up'   },
+    { x: CX-1250, y: CY+1250, w: 260, h: 190, c: '#7c5233', door: 'up'   },
+    { x: CX+1450, y: CY- 950, w: 200, h: 160, c: '#6b4327', door: 'down' }
+  ];
+  for (const b of far) buildings.push(b);
+
+  // --- Пустынные объекты ---
+  const inTown = (x, y) =>
+    x > CX-1200 && x < CX+1150 && y > CY-750 && y < CY+750;
+
+  for (let i = 0; i < 520; i++){
+    const x = rand(60, WORLD.w - 60);
+    const y = rand(60, WORLD.h - 60);
+    if (inTown(x, y)) continue;
+    if (collidesBuildings(x, y, 40)) continue;
+
+    const r = Math.random();
+    const type = r < 0.42 ? 'cactus' : (r < 0.74 ? 'rock' : 'tree');
+    props.push({ x, y, type, s: rand(0.75, 1.45), rot: rand(0, TAU) });
+  }
+
+  // Бочки возле домов
+  for (let i = 0; i < 30; i++){
+    const x = CX + rand(-1150, 1100);
+    const y = CY + (Math.random() < 0.5 ? -200 : 200) + rand(-24, 24);
+    if (collidesBuildings(x, y, 24)) continue;
+    props.push({ x, y, type: 'barrel', s: 1, rot: 0 });
+  }
+
+  // --- Текстура земли ---
+  for (let i = 0; i < 2600; i++){
+    specks.push({
+      x: rand(0, WORLD.w), y: rand(0, WORLD.h),
+      r: rand(0.8, 2.6), a: rand(0.04, 0.16)
+    });
+  }
+  for (let i = 0; i < 140; i++){
+    patches.push({
+      x: rand(0, WORLD.w), y: rand(0, WORLD.h),
+      r: rand(70, 200), a: rand(0.015, 0.06)
+    });
+  }
+}
+
+/* ---- Коллизии ---- */
+function collidesBuildings(x, y, r){
+  for (const b of buildings){
+    const cx = clamp(x, b.x, b.x + b.w);
+    const cy = clamp(y, b.y, b.y + b.h);
+    const dx = x - cx, dy = y - cy;
+    if (dx*dx + dy*dy < r*r) return b;
+  }
+  return null;
+}
+
+function resolveCollision(ent){
+  for (const b of buildings){
+    const cx = clamp(ent.x, b.x, b.x + b.w);
+    const cy = clamp(ent.y, b.y, b.y + b.h);
+    const dx = ent.x - cx;
+    const dy = ent.y - cy;
+    const d2 = dx*dx + dy*dy;
+
+    if (d2 < ent.r * ent.r){
+      const d = Math.sqrt(d2);
+      if (d < 0.0001){
+        const left  = ent.x - b.x;
+        const right = b.x + b.w - ent.x;
+        const top   = ent.y - b.y;
+        const bot   = b.y + b.h - ent.y;
+        const m = Math.min(left, right, top, bot);
+        if      (m === left)  ent.x = b.x - ent.r;
+        else if (m === right) ent.x = b.x + b.w + ent.r;
+        else if (m === top)   ent.y = b.y - ent.r;
+        else                  ent.y = b.y + b.h + ent.r;
+      } else {
+        const push = (ent.r - d) / d;
+        ent.x += dx * push;
+        ent.y += dy * push;
+      }
+    }
+  }
+  ent.x = clamp(ent.x, ent.r, WORLD.w - ent.r);
+  ent.y = clamp(ent.y, ent.r, WORLD.h - ent.r);
+}
+
+/* Отрезок vs прямоугольник (Liang-Barsky) */
+function segRect(x1, y1, x2, y2, r){
+  const dx = x2 - x1, dy = y2 - y1;
+  let t0 = 0, t1 = 1;
+  const p = [-dx, dx, -dy, dy];
+  const q = [x1 - r.x, r.x + r.w - x1, y1 - r.y, r.y + r.h - y1];
+
+  for (let i = 0; i < 4; i++){
+    if (p[i] === 0){
+      if (q[i] < 0) return false;
+    } else {
+      const t = q[i] / p[i];
+      if (p[i] < 0){ if (t > t1) return false; if (t > t0) t0 = t; }
+      else         { if (t < t0) return false; if (t < t1) t1 = t; }
+    }
+  }
+  return true;
+}
+
+function segCircle(x1, y1, x2, y2, cx, cy, r){
+  const dx = x2 - x1, dy = y2 - y1;
+  const l2 = dx*dx + dy*dy;
+  let t = l2 ? ((cx - x1) * dx + (cy - y1) * dy) / l2 : 0;
+  t = clamp(t, 0, 1);
+  const px = x1 + dx * t, py = y1 + dy * t;
+  return (px - cx) * (px - cx) + (py - cy) * (py - cy) <= r * r;
+}
+
+function hasLOS(x1, y1, x2, y2){
+  for (const b of buildings) if (segRect(x1, y1, x2, y2, b)) return false;
+  return true;
+}
+
+/* ==========================================================
+   СОСТОЯНИЕ ИГРЫ
+   ========================================================== */
+let state = 'menu';           // menu | play | over
+let bullets = [];
+let enemies = [];
+let particles = [];
+let horse   = null;
+
+let shake = 0;
+let time  = 0;
+let score = 0;
+let kills = 0;
+let spawnTimer = 0;
+let last = performance.now();
+let flashTimer = 0;
+
+const player = {
+  x: CX, y: CY + 120, r: 13,
+  angle: 0, walkPhase: 0,
+  hp: 100, maxHp: 100,
+  ammo: 12, maxAmmo: 12, reserve: 72,
+  fireCd: 0, reload: 0,
+  deadEye: 1, deActive: false,
+  mounted: false, hurt: 0
+};
+
+/* ---------- Запуск / рестарт ---------- */
+function startGame(){
+  state = 'play';
+  bullets = [];
+  enemies = [];
+  particles = [];
+  score = 0;
+  kills = 0;
+  time  = 0;
+  shake = 0;
+  spawnTimer = 1.2;
+
+  player.x = CX;
+  player.y = CY + 140;
+  player.angle = -Math.PI / 2;
+  player.hp = 100;
+  player.ammo = 12;
+  player.reserve = 72;
+  player.fireCd = 0;
+  player.reload = 0;
+  player.deadEye = 1;
+  player.deActive = false;
+  player.mounted = false;
+  player.hurt = 0;
+  player.walkPhase = 0;
+
+  horse = { x: CX + 100, y: CY + 180, r: 18, angle: 0, walkPhase: 0 };
+
+  for (let i = 0; i < 4; i++) spawnEnemy();
+
+  updateCamera();
+  last = performance.now();
+}
+
+function gameOver(){
+  state = 'over';
+  mouse.down = false;
+  for (let i = 0; i < 30; i++){
+    const a = Math.random() * TAU, sp = rand(60, 320);
+    particles.push({
+      x: player.x, y: player.y,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: rand(0.4, 1.1), max: 1.1,
+      color: '#8f1d16', size: rand(2, 5), gravity: 0
+    });
+  }
+  sfxHit();
+}
+
+/* ==========================================================
+   ИГРОК
+   ========================================================== */
+function updateCamera(){
+  cam.x = player.x - W / 2;
+  cam.y = player.y - H / 2;
+  cam.x = clamp(cam.x, 0, Math.max(0, WORLD.w - W));
+  cam.y = clamp(cam.y, 0, Math.max(0, WORLD.h - H));
+  if (WORLD.w < W) cam.x = (WORLD.w - W) / 2;
+  if (WORLD.h < H) cam.y = (WORLD.h - H) / 2;
+}
+
+function nearestEnemy(x, y, maxD){
+  let best = null, bd = maxD;
+  for (const e of enemies){
+    const d = dist(x, y, e.x, e.y);
+    if (d < bd){ bd = d; best = e; }
+  }
+  return best;
+}
+
+function toggleDeadEye(){
+  if (state !== 'play') return;
+  if (player.deActive){ player.deActive = false; return; }
+  if (player.deadEye > 0.15){
+    player.deActive = true;
+    sfxDeadEye();
+  }
+}
+
+function startReload(){
+  if (state !== 'play') return;
+  if (player.reload > 0) return;
+  if (player.ammo >= player.maxAmmo) return;
+  if (player.reserve <= 0) return;
+  player.reload = 1.35;
+  sfxReload();
+}
+
+function fire(){
+  if (player.reload > 0) return;
+
+  if (player.ammo <= 0){ startReload(); return; }
+
+  player.ammo--;
+  player.fireCd = player.deActive ? 0.11 : 0.17;
+
+  const spread = player.deActive ? 0 : 0.05;
+  const a = player.angle + rand(-spread, spread);
+
+  const bx = player.x + Math.cos(player.angle) * 22;
+  const by = player.y + Math.sin(player.angle) * 22;
+
+  bullets.push({
+    x: bx, y: by, px: bx, py: by,
+    vx: Math.cos(a) * 1500, vy: Math.sin(a) * 1500,
+    life: 1.4, friendly: true, dmg: 35
+  });
+
+  // вспышка
+  for (let i = 0; i < 7; i++){
+    const ang = a + rand(-0.5, 0.5), sp = rand(80, 420);
+    particles.push({
+      x: bx, y: by,
+      vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+      life: rand(0.05, 0.18), max: 0.18,
+      color: i % 2 ? '#fff0a8' : '#ffb43a',
+      size: rand(2, 5), gravity: 0
+    });
+  }
+  // гильза
+  particles.push({
+    x: bx, y: by,
+    vx: Math.cos(a + 2.2) * 160, vy: Math.sin(a + 2.2) * 160,
+    life: 0.8, max: 0.8, color: '#d9b23a', size: 2.4, gravity: 0
+  });
+
+  shake = Math.min(shake + 4, 10);
+  sfxShot(0.16);
+}
+
+function toggleHorse(){
+  if (state !== 'play') return;
+
+  if (player.mounted){
+    player.mounted = false;
+    const a = player.angle + Math.PI / 2;
+    horse.x = player.x + Math.cos(a) * 46;
+    horse.y = player.y + Math.sin(a) * 46;
+    resolveCollision(horse);
+  } else if (horse && dist(horse.x, horse.y, player.x, player.y) < 90){
+    player.mounted = true;
+    player.x = horse.x;
+    player.y = horse.y;
+    sfxWhistle();
+  }
+}
+
+function updatePlayer(dt){
+  if (player.hp <= 0) return;
+
+  /* --- движение --- */
+  let ix = 0, iy = 0;
+  if (keys.KeyW || keys.ArrowUp)    iy--;
+  if (keys.KeyS || keys.ArrowDown)  iy++;
+  if (keys.KeyA || keys.ArrowLeft)  ix--;
+  if (keys.KeyD || keys.ArrowRight) ix++;
+
+  const l = Math.hypot(ix, iy);
+
+  let speed = player.mounted ? 340 : 195;
+  if ((keys.ShiftLeft || keys.ShiftRight) && !player.mounted) speed *= 1.45;
+
+  if (l > 0){
+    ix /= l; iy /= l;
+    player.x += ix * speed * dt;
+    player.y += iy * speed * dt;
+    player.walkPhase += dt * (player.mounted ? 14 : 11);
+  } else {
+    player.walkPhase *= Math.pow(0.02, dt);
+  }
+
+  resolveCollision(player);
+
+  /* --- прицел --- */
+  const mwx = mouse.x + cam.x;
+  const mwy = mouse.y + cam.y;
+  let target = Math.atan2(mwy - player.y, mwx - player.x);
+
+  if (player.deActive){
+    const t = nearestEnemy(player.x, player.y, 950);
+    if (t) target = Math.atan2(t.y - player.y, t.x - player.x);
+  }
+
+  let diff = target - player.angle;
+  while (diff >  Math.PI) diff -= TAU;
+  while (diff < -Math.PI) diff += TAU;
+  player.angle += diff * Math.min(1, dt * 24);
+
+  /* --- перезарядка --- */
+  if (player.reload > 0){
+    player.reload -= dt;
+    if (player.reload <= 0){
+      player.reload = 0;
+      const need = player.maxAmmo - player.ammo;
+      const take = Math.min(need, player.reserve);
+      player.ammo += take;
+      player.reserve -= take;
+    }
+  }
+
+  if (player.fireCd > 0) player.fireCd -= dt;
+  if (player.hurt > 0)   player.hurt -= dt;
+
+  /* --- огонь --- */
+  if (mouse.down && player.fireCd <= 0 && player.reload <= 0){
+    fire();
+  }
+
+  /* --- Dead Eye расход --- */
+  if (player.deActive){
+    player.deadEye -= dt * 0.30;
+    if (player.deadEye <= 0){
+      player.deadEye = 0;
+      player.deActive = false;
+    }
+  } else if (player.deadEye < 1){
+    player.deadEye = Math.min(1, player.deadEye + dt * 0.035);
+  }
+
+  /* --- конь --- */
+  if (player.mounted){
+    horse.x = player.x;
+    horse.y = player.y;
+    horse.angle = player.angle;
+    if (l > 0) horse.walkPhase += dt * 16;
+  } else if (horse){
+    const d = dist(horse.x, horse.y, player.x, player.y);
+    if (d > 280){
+      const a = Math.atan2(player.y - horse.y, player.x - horse.x);
+      horse.x += Math.cos(a) * 95 * dt;
+      horse.y += Math.sin(a) * 95 * dt;
+      horse.angle = a;
+      horse.walkPhase += dt * 9;
+      resolveCollision(horse);
+    }
+  }
+}
+
+/* ==========================================================
+   ВРАГИ
+   ========================================================== */
+function spawnEnemy(){
+  for (let i = 0; i < 50; i++){
+    const a = Math.random() * TAU;
+    const d = rand(820, 1350);
+    const x = clamp(player.x + Math.cos(a) * d, 60, WORLD.w - 60);
+    const y = clamp(player.y + Math.sin(a) * d, 60, WORLD.h - 60);
+
+    if (collidesBuildings(x, y, 30)) continue;
+
+    enemies.push({
+      x, y, r: 13,
+      hp: 70, maxHp: 70,
+      angle: 0,
+      speed: rand(100, 130) + Math.min(65, time * 0.55),
+      fireCd: rand(0.6, 2.2),
+      strafeDir: Math.random() < 0.5 ? -1 : 1,
+      strafeT: rand(0.4, 1.6),
+      hurt: 0,
+      flash: 0,
+      walkPhase: Math.random() * 10
+    });
+    return;
+  }
+}
+
+function killEnemy(e){
+  const i = enemies.indexOf(e);
+  if (i >= 0) enemies.splice(i, 1);
+
+  score += 100;
+  kills++;
+
+  for (let k = 0; k < 18; k++){
+    const a = Math.random() * TAU, sp = rand(40, 280);
+    particles.push({
+      x: e.x, y: e.y,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: rand(0.3, 0.8), max: 0.8,
+      color: k % 3 ? '#a3151a' : '#6d0f12',
+      size: rand(2, 4.5), gravity: 0
+    });
+  }
+  sfxHit();
+}
+
+function updateEnemies(dt){
+  for (const e of enemies){
+    if (e.hurt > 0) e.hurt -= dt;
+    if (e.flash > 0) e.flash -= dt;
+
+    const d = dist(e.x, e.y, player.x, player.y);
+    const ang = Math.atan2(player.y - e.y, player.x - e.x);
+
+    // смена стрейфа
+    e.strafeT -= dt;
+    if (e.strafeT <= 0){
+      e.strafeT = rand(0.6, 1.8);
+      e.strafeDir = Math.random() < 0.5 ? -1 : 1;
+    }
+
+    let mx = 0, my = 0;
+
+    if (d > 350){ mx += Math.cos(ang); my += Math.sin(ang); }
+    else if (d < 210){ mx -= Math.cos(ang) * 0.7; my -= Math.sin(ang) * 0.7; }
+
+    mx += -Math.sin(ang) * e.strafeDir * 0.75;
+    my +=  Math.cos(ang) * e.strafeDir * 0.75;
+
+    const ml = Math.hypot(mx, my) || 1;
+    e.x += (mx / ml) * e.speed * dt;
+    e.y += (my / ml) * e.speed * dt;
+    e.walkPhase += dt * 10;
+
+    resolveCollision(e);
+
+    // прицел всегда на игрока
+    let diff = ang - e.angle;
+    while (diff >  Math.PI) diff -= TAU;
+    while (diff < -Math.PI) diff += TAU;
+    e.angle += diff * Math.min(1, dt * 8);
+
+    // стрельба
+    e.fireCd -= dt;
+    if (d < 760 && e.fireCd <= 0 && hasLOS(e.x, e.y, player.x, player.y)){
+      e.fireCd = rand(1.1, 2.3);
+
+      const a = ang + rand(-0.12, 0.12);
+      bullets.push({
+        x: e.x + Math.cos(a) * 18,
+        y: e.y + Math.sin(a) * 18,
+        px: e.x + Math.cos(a) * 18,
+        py: e.y + Math.sin(a) * 18,
+        vx: Math.cos(a) * 640,
+        vy: Math.sin(a) * 640,
+        life: 1.6, friendly: false, dmg: 8
+      });
+
+      e.flash = 0.07;
+      sfxShot(0.055);
+    }
+  }
+}
+
+/* ==========================================================
+   ПУЛИ И ЧАСТИЦЫ
+   ========================================================== */
+function updateBullets(dt){
+  for (let i = bullets.length - 1; i >= 0; i--){
+    const b = bullets[i];
+
+    b.px = b.x; b.py = b.y;
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.life -= dt;
+
+    let dead = b.life <= 0 || b.x < 0 || b.y < 0 || b.x > WORLD.w || b.y > WORLD.h;
+
+    // столкновение со зданиями
+    if (!dead){
+      for (const bd of buildings){
+        if (segRect(b.px, b.py, b.x, b.y, bd)){
+          dead = true;
+          for (let k = 0; k < 5; k++){
+            const a = Math.atan2(-b.vy, -b.vx) + rand(-1, 1), sp = rand(30, 180);
+            particles.push({
+              x: b.x, y: b.y,
+              vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+              life: rand(0.1, 0.35), max: 0.35,
+              color: '#c9b08a', size: rand(1.5, 3), gravity: 0
+            });
+          }
+          break;
+        }
+      }
+    }
+
+    // попадание в цели
+    if (!dead){
+      if (b.friendly){
+        for (const e of enemies){
+          if (segCircle(b.px, b.py, b.x, b.y, e.x, e.y, e.r + 4)){
+            e.hp -= b.dmg;
+            e.hurt = 0.15;
+            blood(e.x, e.y, b.vx, b.vy);
+            dead = true;
+            if (e.hp <= 0) killEnemy(e);
+            break;
+          }
+        }
+      } else {
+        if (segCircle(b.px, b.py, b.x, b.y, player.x, player.y, player.r + 4)){
+          hurtPlayer(b.dmg);
+          blood(player.x, player.y, b.vx, b.vy);
+          dead = true;
+        }
+      }
+    }
+
+    if (dead) bullets.splice(i, 1);
+  }
+}
+
+function blood(x, y, vx, vy){
+  const a0 = Math.atan2(vy, vx);
+  for (let i = 0; i < 10; i++){
+    const a = a0 + rand(-0.9, 0.9), sp = rand(50, 280);
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: rand(0.25, 0.6), max: 0.6,
+      color: '#a3151a', size: rand(1.5, 3.5), gravity: 0
+    });
+  }
+}
+
+function hurtPlayer(dmg){
+  if (player.hp <= 0) return;
+  player.hp -= dmg;
+  player.hurt = 0.3;
+  shake = Math.min(shake + 5, 14);
+  flashTimer = 0.25;
+  sfxHit();
+  if (player.hp <= 0){
+    player.hp = 0;
+    gameOver();
+  }
+}
+
+function updateParticles(dt){
+  for (let i = particles.length - 1; i >= 0; i--){
+    const p = particles[i];
+    p.life -= dt;
+    if (p.life <= 0){ particles.splice(i, 1); continue; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    const k = Math.exp(-6 * dt);
+    p.vx *= k;
+    p.vy *= k;
+    p.vy += (p.gravity || 0) * dt;
+  }
+}
+
+/* ==========================================================
+   ОБНОВЛЕНИЕ
+   ========================================================== */
+function update(dt){
+  updateCamera();
+
+  if (shake > 0) shake = Math.max(0, shake - dt * 26);
+  if (flashTimer > 0) flashTimer -= dt;
+
+  if (state !== 'play'){
+    updateParticles(dt);
+    return;
+  }
+
+  time += dt;
+
+  const ts = player.deActive ? 0.35 : 1;
+
+  updatePlayer(dt * (player.deActive ? 0.6 : 1));
+  updateCamera();
+
+  updateEnemies(dt * ts);
+  updateBullets(dt * ts);
+  updateParticles(dt);
+
+  // спавн
+  spawnTimer -= dt;
+  if (spawnTimer <= 0){
+    const maxEnemies = 4 + Math.min(15, Math.floor(time / 22));
+    if (enemies.length < maxEnemies) spawnEnemy();
+    spawnTimer = rand(0.7, 2.0);
+  }
+}
+
+/* ==========================================================
+   ОТРИСОВКА
+   ========================================================== */
+
+/* ---- земля ---- */
+function drawGround(){
+  const x0 = cam.x, y0 = cam.y, x1 = cam.x + W, y1 = cam.y + H;
+
+  ctx.fillStyle = '#cf9f5e';
+  ctx.fillRect(x0 - 80, y0 - 80, W + 160, H + 160);
+
+  // пятна
+  ctx.globalAlpha = 1;
+  for (const p of patches){
+    if (p.x + p.r < x0 || p.x - p.r > x1 || p.y + p.r < y0 || p.y - p.r > y1) continue;
+    ctx.globalAlpha = p.a;
+    ctx.fillStyle = '#8a6435';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, TAU);
+    ctx.fill();
+  }
+
+  // крупинки
+  for (const s of specks){
+    if (s.x < x0 || s.x > x1 || s.y < y0 || s.y > y1) continue;
+    ctx.globalAlpha = s.a;
+    ctx.fillStyle = '#6b4a24';
+    ctx.fillRect(s.x, s.y, s.r, s.r);
+  }
+  ctx.globalAlpha = 1;
+
+  // дорога
+  ctx.fillStyle = '#b98a52';
+  ctx.fillRect(CX - 1340, CY - 240, 2680, 480);
+
+  ctx.fillStyle = 'rgba(120,85,45,0.30)';
+  ctx.fillRect(CX - 1340, CY - 240, 2680, 22);
+  ctx.fillRect(CX - 1340, CY + 218, 2680, 22);
+
+  ctx.fillStyle = 'rgba(120,85,45,0.20)';
+  ctx.fillRect(CX - 1340, CY - 62, 2680, 14);
+  ctx.fillRect(CX - 1340, CY + 48, 2680, 14);
+}
+
+/* ---- объекты ---- */
+function drawProps(){
+  const x0 = cam.x - 100, y0 = cam.y - 100, x1 = cam.x + W + 100, y1 = cam.y + H + 100;
+
+  for (const p of props){
+    if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) continue;
+
+    ctx.save();
+    ctx.translate(p.x, p.y);
+
+    // тень
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath();
+    ctx.ellipse(6, 8, 16 * p.s, 9 * p.s, 0, 0, TAU);
+    ctx.fill();
+
+    ctx.scale(p.s, p.s);
+
+    if (p.type === 'cactus'){
+      ctx.fillStyle = '#4a7a3a';
+      ctx.strokeStyle = '#2f5226';
+      ctx.lineWidth = 2;
+
+      ctx.beginPath(); ctx.arc(-13, -9, 7, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc( 13, -12, 6, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 13, 0, TAU); ctx.fill(); ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.beginPath(); ctx.arc(-3, -3, 6, 0, TAU); ctx.fill();
+
+    } else if (p.type === 'rock'){
+      ctx.fillStyle = '#9a9186';
+      ctx.strokeStyle = '#6f6862';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 12, 0, TAU);
+      ctx.arc(-8, 5, 8, 0, TAU);
+      ctx.arc(8, 4, 7, 0, TAU);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+      ctx.beginPath(); ctx.arc(-4, -4, 5, 0, TAU); ctx.fill();
+
+    } else if (p.type === 'tree'){
+      ctx.strokeStyle = '#5a4028';
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 5; i++){
+        const a = (i / 5) * TAU + p.rot;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a) * 20, Math.sin(a) * 20);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#6b4c2e';
+      ctx.beginPath(); ctx.arc(0, 0, 8, 0, TAU); ctx.fill();
+      ctx.strokeStyle = '#4a3320'; ctx.lineWidth = 2; ctx.stroke();
+
+    } else if (p.type === 'barrel'){
+      ctx.fillStyle = '#8a5a30';
+      ctx.strokeStyle = '#4a2f18';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, 10, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 6, 0, TAU); ctx.stroke();
+      ctx.fillStyle = '#a06c3a';
+      ctx.beginPath(); ctx.arc(-2, -2, 3, 0, TAU); ctx.fill();
+    }
+
+    ctx.restore();
+  }
+}
+
+/* ---- дома ---- */
+function drawBuildings(){
+  const x0 = cam.x - 200, y0 = cam.y - 200, x1 = cam.x + W + 200, y1 = cam.y + H + 200;
+
+  for (const b of buildings){
+    if (b.x > x1 || b.x + b.w < x0 || b.y > y1 || b.y + b.h < y0) continue;
+
+    // тень
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(b.x + 10, b.y + 14, b.w, b.h);
+
+    // крыша
+    ctx.fillStyle = b.c;
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+
+    // доски
+    ctx.strokeStyle = 'rgba(0,0,0,0.20)';
+    ctx.lineWidth = 2;
+    for (let i = 1; i < 7; i++){
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y + (b.h * i) / 7);
+      ctx.lineTo(b.x + b.w, b.y + (b.h * i) / 7);
+      ctx.stroke();
+    }
+
+    // конёк крыши
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(b.x + 10, b.y + b.h / 2);
+    ctx.lineTo(b.x + b.w - 10, b.y + b.h / 2);
+    ctx.stroke();
+
+    // рамка
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(b.x + 1.5, b.y + 1.5, b.w - 3, b.h - 3);
+
+    // дверь / крыльцо
+    if (b.door === 'down'){
+      ctx.fillStyle = '#3b2517';
+      ctx.fillRect(b.x + b.w / 2 - 24, b.y + b.h - 18, 48, 18);
+      ctx.fillStyle = 'rgba(255,220,160,0.10)';
+      ctx.fillRect(b.x + b.w / 2 - 24, b.y + b.h - 18, 48, 4);
+    } else if (b.door === 'up'){
+      ctx.fillStyle = '#3b2517';
+      ctx.fillRect(b.x + b.w / 2 - 24, b.y, 48, 18);
+      ctx.fillStyle = 'rgba(255,220,160,0.10)';
+      ctx.fillRect(b.x + b.w / 2 - 24, b.y + 14, 48, 4);
+    }
+  }
+}
+
+/* ---- ковбой ---- */
+function drawCowboy(x, y, angle, opts){
+  const isPlayer = opts.isPlayer;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // тень
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(3, 5, 16, 12, 0, 0, TAU);
+  ctx.fill();
+
+  ctx.rotate(angle);
+
+  const bob = Math.sin(opts.walkPhase) * 1.8;
+
+  // ноги
+  ctx.fillStyle = '#3a2a1c';
+  ctx.beginPath(); ctx.ellipse(-7, -6 + bob, 5, 4, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-7,  6 - bob, 5, 4, 0, 0, TAU); ctx.fill();
+
+  // плащ / тело
+  ctx.fillStyle = isPlayer ? '#4a3a6b' : '#5c2b22';
+  ctx.beginPath(); ctx.ellipse(0, 0, 11, 10, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.40)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // руки
+  ctx.fillStyle = isPlayer ? '#3d2f59' : '#4a2018';
+  ctx.beginPath(); ctx.arc(9, -6, 4.5, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(9,  6, 4.5, 0, TAU); ctx.fill();
+
+  // револьвер
+  ctx.fillStyle = '#26262b';
+  ctx.fillRect(11, -2.5, 15, 5);
+  ctx.fillStyle = '#4a4a52';
+  ctx.fillRect(11, -2.5, 6, 5);
+
+  // вспышка выстрела
+  if (opts.flash > 0){
+    ctx.fillStyle = 'rgba(255,220,120,0.9)';
+    ctx.beginPath(); ctx.arc(28, 0, 7, 0, TAU); ctx.fill();
+  }
+
+  // голова
+  ctx.fillStyle = '#d9a679';
+  ctx.beginPath(); ctx.arc(1, 0, 7, 0, TAU); ctx.fill();
+
+  // шляпа
+  ctx.fillStyle = isPlayer ? '#4a3524' : '#2f2018';
+  ctx.beginPath(); ctx.arc(3, 0, 9.5, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.fillStyle = isPlayer ? '#5f452b' : '#3b281c';
+  ctx.beginPath(); ctx.arc(3, 0, 5.5, 0, TAU); ctx.fill();
+
+  // бандана у врага
+  if (!isPlayer){
+    ctx.fillStyle = '#b02020';
+    ctx.beginPath();
+    ctx.arc(1, 0, 7.6, Math.PI * 0.25, Math.PI * 0.75);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+/* ---- конь ---- */
+function drawHorse(h){
+  ctx.save();
+  ctx.translate(h.x, h.y);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(4, 8, 30, 15, 0, 0, TAU);
+  ctx.fill();
+
+  ctx.rotate(h.angle);
+
+  const b = Math.sin(h.walkPhase) * 3.5;
+
+  // ноги
+  ctx.fillStyle = '#4a2f1c';
+  ctx.beginPath(); ctx.ellipse(-11, -9 + b, 7, 5, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-11,  9 - b, 7, 5, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( 11, -9 - b, 7, 5, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( 11,  9 + b, 7, 5, 0, 0, TAU); ctx.fill();
+
+  // хвост
+  ctx.fillStyle = '#3a2412';
+  ctx.beginPath(); ctx.ellipse(-27, 0, 7, 5, 0, 0, TAU); ctx.fill();
+
+  // тело
+  ctx.fillStyle = '#7a4f2a';
+  ctx.beginPath(); ctx.ellipse(0, 0, 25, 13, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#4a2f1c';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // шея + голова
+  ctx.fillStyle = '#7a4f2a';
+  ctx.beginPath(); ctx.ellipse(24, 0, 11, 7.5, 0, 0, TAU); ctx.fill();
+  ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(35, 0, 7.5, 5, 0, 0, TAU); ctx.fill();
+  ctx.stroke();
+
+  // грива
+  ctx.fillStyle = '#3a2412';
+  ctx.beginPath(); ctx.ellipse(19, 0, 6, 10, 0, 0, TAU); ctx.fill();
+
+  // седло
+  ctx.fillStyle = '#5a3a20';
+  ctx.beginPath(); ctx.ellipse(-2, 0, 10, 9, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#33200f'; ctx.lineWidth = 1.5; ctx.stroke();
+
+  ctx.restore();
+}
+
+/* ---- сущности ---- */
+function drawEntities(){
+  // конь
+  if (horse && !player.mounted) drawHorse(horse);
+  if (horse && player.mounted)  drawHorse(horse);
+
+  // враги
+  for (const e of enemies){
+    ctx.save();
+    if (e.hurt > 0){
+      ctx.globalAlpha = 0.85;
+    }
+    drawCowboy(e.x, e.y, e.angle, {
+      isPlayer: false,
+      walkPhase: e.walkPhase,
+      flash: e.flash
+    });
+    ctx.restore();
+
+    // полоска здоровья
+    if (e.hp < e.maxHp){
+      const w = 30, h = 4;
+      const px = e.x - w / 2, py = e.y - 26;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(px - 1, py - 1, w + 2, h + 2);
+      ctx.fillStyle = '#c0392b';
+      ctx.fillRect(px, py, w * (e.hp / e.maxHp), h);
+    }
+
+    // метка Dead Eye
+    if (player.deActive){
+      ctx.strokeStyle = 'rgba(255,240,160,0.9)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, 20, 0, TAU);
+      ctx.stroke();
+    }
+  }
+
+  // игрок
+  if (player.hp > 0){
+    if (!player.mounted){
+      drawCowboy(player.x, player.y, player.angle, {
+        isPlayer: true,
+        walkPhase: player.walkPhase,
+        flash: player.fireCd > 0.12 ? 1 : 0
+      });
+    } else {
+      // в седле — ковбой поверх коня
+      ctx.save();
+      ctx.translate(player.x, player.y);
+      ctx.rotate(player.angle);
+      ctx.translate(-4, 0);
+      ctx.restore();
+      drawCowboy(player.x, player.y, player.angle, {
+        isPlayer: true,
+        walkPhase: player.walkPhase,
+        flash: player.fireCd > 0.12 ? 1 : 0
+      });
+    }
+  }
+
+  // пули
+  for (const b of bullets){
+    const a = Math.atan2(b.vy, b.vx);
+    const len = b.friendly ? 20 : 14;
+
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(a);
+
+    const grd = ctx.createLinearGradient(-len, 0, 6, 0);
+    if (b.friendly){
+      grd.addColorStop(0, 'rgba(255,235,150,0)');
+      grd.addColorStop(1, 'rgba(255,245,190,1)');
+    } else {
+      grd.addColorStop(0, 'rgba(255,140,60,0)');
+      grd.addColorStop(1, 'rgba(255,190,110,1)');
+    }
+    ctx.fillStyle = grd;
+    ctx.fillRect(-len, -1.8, len + 6, 3.6);
+    ctx.restore();
+  }
+
+  // частицы
+  for (const p of particles){
+    const a = clamp(p.life / p.max, 0, 1);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color;
+    const s = p.size * (0.4 + a * 0.6);
+    ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+  }
+  ctx.globalAlpha = 1;
+
+  // индикатор перезарядки над игроком
+  if (player.reload > 0){
+    const prog = 1 - player.reload / 1.35;
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y - 34, 14, -Math.PI / 2, -Math.PI / 2 + TAU);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#e8c98a';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y - 34, 14, -Math.PI / 2, -Math.PI / 2 + TAU * prog);
+    ctx.stroke();
+  }
+}
+
+/* ==========================================================
+   HUD
+   ========================================================== */
+function drawMinimap(){
+  const S = 168;
+  const px = W - S - 22;
+  const py = 22;
+  const range = 1400;
+  const k = S / (range * 2);
+  const cx = px + S / 2;
+  const cy = py + S / 2;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(px, py, S, S);
+  ctx.clip();
+
+  ctx.fillStyle = 'rgba(22,14,7,0.78)';
+  ctx.fillRect(px, py, S, S);
+
+  // сетка
+  ctx.strokeStyle = 'rgba(220,190,140,0.07)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++){
+    ctx.beginPath();
+    ctx.moveTo(px, py + (S * i) / 4); ctx.lineTo(px + S, py + (S * i) / 4);
+    ctx.moveTo(px + (S * i) / 4, py); ctx.lineTo(px + (S * i) / 4, py + S);
+    ctx.stroke();
+  }
+
+  // дома
+  ctx.fillStyle = 'rgba(150,115,72,0.9)';
+  for (const b of buildings){
+    const bx = cx + (b.x - player.x) * k;
+    const by = cy + (b.y - player.y) * k;
+    ctx.fillRect(bx, by, b.w * k, b.h * k);
+  }
+
+  // враги
+  ctx.fillStyle = '#e0503c';
+  for (const e of enemies){
+    const ex = cx + (e.x - player.x) * k;
+    const ey = cy + (e.y - player.y) * k;
+    ctx.beginPath(); ctx.arc(ex, ey, 3.2, 0, TAU); ctx.fill();
+  }
+
+  // конь
+  if (horse && !player.mounted){
+    ctx.fillStyle = '#c9a06a';
+    ctx.beginPath();
+    ctx.arc(cx + (horse.x - player.x) * k, cy + (horse.y - player.y) * k, 3.2, 0, TAU);
+    ctx.fill();
+  }
+
+  // игрок
+  ctx.fillStyle = '#fff6d8';
+  ctx.beginPath(); ctx.arc(cx, cy, 3.6, 0, TAU); ctx.fill();
+
+  // направление взгляда
+  ctx.strokeStyle = 'rgba(255,246,216,0.7)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(player.angle) * 16, cy + Math.sin(player.angle) * 16);
+  ctx.stroke();
+
+  ctx.restore();
+
+  // рамка
+  ctx.strokeStyle = 'rgba(220,190,140,0.55)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px, py, S, S);
+
+  ctx.fillStyle = 'rgba(220,190,140,0.55)';
+  ctx.font = '11px Georgia, serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('CARDWELL', px + 4, py - 6);
+}
+
+function drawCrosshair(){
+  const cx = mouse.x, cy = mouse.y;
+
+  ctx.save();
+  if (player.deActive){
+    ctx.strokeStyle = 'rgba(255,235,150,0.95)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, 13, 0, TAU); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - 22, cy); ctx.lineTo(cx - 8, cy);
+    ctx.moveTo(cx + 8, cy);  ctx.lineTo(cx + 22, cy);
+    ctx.moveTo(cx, cy - 22); ctx.lineTo(cx, cy - 8);
+    ctx.moveTo(cx, cy + 8);  ctx.lineTo(cx, cy + 22);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = 'rgba(255,246,220,0.85)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - 15, cy); ctx.lineTo(cx - 5, cy);
+    ctx.moveTo(cx + 5, cy);  ctx.lineTo(cx + 15, cy);
+    ctx.moveTo(cx, cy - 15); ctx.lineTo(cx, cy - 5);
+    ctx.moveTo(cx, cy + 5);  ctx.lineTo(cx, cy + 15);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, 2, 0, TAU); ctx.fillStyle = 'rgba(255,246,220,0.9)'; ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawHUD(){
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+
+  if (state === 'menu'){ drawMenu(); return; }
+  if (state === 'over'){ drawOver(); return; }
+
+  /* --- здоровье --- */
+  const bw = 280, bh = 16, bx = 30, by = H - 92;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  rr(ctx, bx - 6, by - 6, bw + 12, bh + 12, 8); ctx.fill();
+
+  ctx.fillStyle = 'rgba(58,20,15,0.9)';
+  rr(ctx, bx, by, bw, bh, 5); ctx.fill();
+
+  const hpw = bw * clamp(player.hp / player.maxHp, 0, 1);
+  if (hpw > 0.5){
+    const g = ctx.createLinearGradient(bx, by, bx, by + bh);
+    g.addColorStop(0, '#e0503c');
+    g.addColorStop(1, '#8f1d16');
+    ctx.fillStyle = g;
+    rr(ctx, bx, by, hpw, bh, 5); ctx.fill();
+  }
+
+  ctx.strokeStyle = 'rgba(230,200,150,0.35)';
+  ctx.lineWidth = 1.5;
+  rr(ctx, bx, by, bw, bh, 5); ctx.stroke();
+
+  ctx.fillStyle = 'rgba(240,220,174,0.55)';
+  ctx.font = '11px Georgia, serif';
+  ctx.fillText('ЗДОРОВЬЕ', bx + 2, by - 12);
+
+  /* --- dead eye --- */
+  const dy = by + bh + 18, dh = 10;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  rr(ctx, bx - 6, dy - 6, bw + 12, dh + 12, 8); ctx.fill();
+
+  ctx.fillStyle = 'rgba(48,36,14,0.9)';
+  rr(ctx, bx, dy, bw, dh, 5); ctx.fill();
+
+  const dw = bw * clamp(player.deadEye, 0, 1);
+  if (dw > 0.5){
+    ctx.fillStyle = player.deActive ? '#fff2b0' : '#d8a83a';
+    rr(ctx, bx, dy, dw, dh, 5); ctx.fill();
+  }
+
+  ctx.strokeStyle = 'rgba(230,200,150,0.35)';
+  ctx.lineWidth = 1.5;
+  rr(ctx, bx, dy, bw, dh, 5); ctx.stroke();
+
+  ctx.fillStyle = 'rgba(240,220,174,0.55)';
+  ctx.fillText('DEAD EYE', bx + 2, dy - 9);
+
+  /* --- патроны --- */
+  ctx.textAlign = 'right';
+  ctx.font = 'bold 32px Georgia, serif';
+  ctx.fillStyle = player.ammo > 0 ? '#f0dcae' : '#c0392b';
+  ctx.fillText(player.ammo + ' / ' + player.reserve, W - 32, H - 44);
+
+  ctx.font = '12px Georgia, serif';
+  ctx.fillStyle = 'rgba(240,220,174,0.55)';
+  ctx.fillText('ПАТРОНЫ', W - 32, H - 26);
+
+  /* --- счёт --- */
+  ctx.textAlign = 'left';
+  ctx.font = 'bold 24px Georgia, serif';
+  ctx.fillStyle = '#f0dcae';
+  ctx.fillText('$ ' + score, 32, 46);
+
+  ctx.font = '13px Georgia, serif';
+  ctx.fillStyle = 'rgba(240,220,174,0.6)';
+  ctx.fillText('Убито: ' + kills, 32, 68);
+  ctx.fillText('Время: ' + Math.floor(time) + 'с', 32, 86);
+
+  /* --- подсказка про коня --- */
+  if (!player.mounted && horse && dist(horse.x, horse.y, player.x, player.y) < 90){
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 16px Georgia, serif';
+    ctx.fillStyle = 'rgba(240,220,174,0.9)';
+    ctx.fillText('[ E ] — оседлать коня', W / 2, H - 130);
+  }
+  if (player.mounted){
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 16px Georgia, serif';
+    ctx.fillStyle = 'rgba(240,220,174,0.9)';
+    ctx.fillText('[ E ] — спешиться', W / 2, H - 130);
+  }
+
+  drawMinimap();
+  drawCrosshair();
+
+  /* --- виньетка --- */
+  const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+
+  /* --- красная вспышка при уроне --- */
+  if (flashTimer > 0){
+    ctx.fillStyle = 'rgba(160,20,20,' + (flashTimer * 0.9) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  /* --- эффект Dead Eye --- */
+  if (player.deActive){
+    ctx.fillStyle = 'rgba(120,90,20,0.10)';
+    ctx.fillRect(0, 0, W, H);
+
+    const vg2 = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.15, W / 2, H / 2, Math.max(W, H) * 0.6);
+    vg2.addColorStop(0, 'rgba(0,0,0,0)');
+    vg2.addColorStop(1, 'rgba(40,20,0,0.6)');
+    ctx.fillStyle = vg2;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  ctx.textAlign = 'left';
+}
+
+/* ---- меню ---- */
+function drawMenu(){
+  ctx.fillStyle = 'rgba(14,9,5,0.88)';
+  ctx.fillRect(0, 0, W, H);
+
+  const g = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, Math.max(W, H) * 0.8);
+  g.addColorStop(0, 'rgba(90,60,25,0.35)');
+  g.addColorStop(1, 'rgba(0,0,0,0.85)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = '#e8c98a';
+  ctx.font = 'bold 68px Georgia, serif';
+  ctx.fillText('RED DEAD CANVAS', W / 2, H / 2 - 110);
+
+  ctx.fillStyle = 'rgba(232,201,138,0.5)';
+  ctx.font = '18px Georgia, serif';
+  ctx.fillText('— история одной пули —', W / 2, H / 2 - 72);
+
+  ctx.fillStyle = 'rgba(232,220,190,0.85)';
+  ctx.font = '16px Georgia, serif';
+  const lines = [
+    'WASD — движение        Мышь — прицел        ЛКМ — огонь',
+    'R — перезарядка        Q — Dead Eye        E — оседлать коня',
+    'Shift — бег            Выживай как можно дольше'
+  ];
+  lines.forEach((t, i) => ctx.fillText(t, W / 2, H / 2 + 10 + i * 30));
+
+  const pulse = 0.55 + Math.sin(performance.now() / 350) * 0.45;
+  ctx.fillStyle = 'rgba(255,225,150,' + pulse + ')';
+  ctx.font = 'bold 24px Georgia, serif';
+  ctx.fillText('НАЖМИ ПРОБЕЛ ИЛИ ЛКМ, ЧТОБЫ НАЧАТЬ', W / 2, H / 2 + 150);
+
+  ctx.textAlign = 'left';
+}
+
+/* ---- экран смерти ---- */
+function drawOver(){
+  ctx.fillStyle = 'rgba(30,4,4,0.72)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = '#c0392b';
+  ctx.font = 'bold 72px Georgia, serif';
+  ctx.fillText('ТЫ ПОГИБ', W / 2, H / 2 - 70);
+
+  ctx.fillStyle = '#e8c98a';
+  ctx.font = 'bold 30px Georgia, serif';
+  ctx.fillText('$ ' + score, W / 2, H / 2 + 10);
+
+  ctx.fillStyle = 'rgba(232,220,190,0.8)';
+  ctx.font = '18px Georgia, serif';
+  ctx.fillText('Врагов уложено: ' + kills, W / 2, H / 2 + 52);
+  ctx.fillText('Продержался: ' + Math.floor(time) + ' секунд', W / 2, H / 2 + 80);
+
+  const pulse = 0.55 + Math.sin(performance.now() / 350) * 0.45;
+  ctx.fillStyle = 'rgba(255,225,150,' + pulse + ')';
+  ctx.font = 'bold 22px Georgia, serif';
+  ctx.fillText('НАЖМИ  R  ЧТОБЫ НАЧАТЬ ЗАНОВО', W / 2, H / 2 + 150);
+
+  ctx.textAlign = 'left';
+}
+
+/* ==========================================================
+   RENDER
+   ========================================================== */
+function render(){
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  updateCamera();
+
+  const sx = shake > 0 ? rand(-shake, shake) : 0;
+  const sy = shake > 0 ? rand(-shake, shake) : 0;
+
+  ctx.save();
+  ctx.translate(-cam.x + sx, -cam.y + sy);
+
+  drawGround();
+  drawProps();
+  drawBuildings();
+  drawEntities();
+
+  ctx.restore();
+
+  drawHUD();
+}
+
+/* ==========================================================
+   ЦИКЛ
+   ========================================================== */
+function loop(t){
+  let dt = (t - last) / 1000;
+  last = t;
+  if (dt > 0.05) dt = 0.05;
+  if (dt < 0)    dt = 0;
+
+  update(dt);
+  render();
+
+  requestAnimationFrame(loop);
+}
+
+/* ==========================================================
+   СТАРТ
+   ========================================================== */
+buildWorld();
+updateCamera();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
