@@ -6,3128 +6,1277 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#140d07">
-<title>Red Dead 3D — Вестерн от первого лица</title>
+<meta name="theme-color" content="#2a1a10">
+<title>Red Dead 3D — Вестерн</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-
   html, body {
-    height: 100%;
-    width: 100%;
+    width: 100%; height: 100%;
     overflow: hidden;
     background: #000;
     touch-action: none;
-    overscroll-behavior: none;
-    -webkit-user-select: none;
     user-select: none;
+    -webkit-user-select: none;
     -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent;
     font-family: Georgia, "Times New Roman", serif;
   }
+  canvas { display: block; touch-action: none; }
 
-  canvas {
-    display: block;
-    touch-action: none;
-    background: #000;
-  }
-
-  #подсказка {
-    position: fixed;
-    left: 0; right: 0; bottom: 6px;
-    text-align: center;
-    color: #e8d5b0;
-    font: 12px Georgia, serif;
-    opacity: .4;
+  #ui {
+    position: fixed; inset: 0;
     pointer-events: none;
-    text-shadow: 0 2px 6px #000;
-    padding: 0 10px;
+    user-select: none;
   }
 
-  @media (pointer: coarse) {
-    #подсказка { display: none; }
+  .btn {
+    position: absolute;
+    border-radius: 50%;
+    background: radial-gradient(circle at 32% 32%, rgba(240,210,150,0.95), rgba(90,55,25,0.92));
+    border: 2px solid rgba(230,200,150,0.75);
+    color: #fff8e0;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-shadow: 0 1px 3px #000;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
   }
+
+  #fps {
+    position: fixed;
+    top: 12px; right: 14px;
+    color: #fff8e0;
+    font: 12px monospace;
+    opacity: 0.72;
+    text-shadow: 0 1px 3px #000;
+    pointer-events: none;
+  }
+
+  #hud {
+    position: fixed;
+    bottom: 22px; left: 22px;
+    color: #fff8e0;
+    text-shadow: 0 2px 6px #000;
+    pointer-events: none;
+  }
+  #hud .label {
+    font-size: 11px;
+    letter-spacing: 2px;
+    opacity: 0.8;
+    margin-bottom: 4px;
+  }
+  #hud .bar {
+    width: 200px; height: 14px;
+    background: rgba(0,0,0,0.55);
+    border: 2px solid rgba(230,200,150,0.55);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5) inset;
+  }
+  #hud .bar .fill {
+    height: 100%;
+    background: linear-gradient(180deg, #e0503c, #8f1d16);
+    transition: width 0.15s;
+  }
+
+  #ammo {
+    position: fixed;
+    bottom: 22px; right: 22px;
+    color: #fff8e0;
+    text-shadow: 0 2px 6px #000;
+    text-align: right;
+    pointer-events: none;
+  }
+  #ammo .num {
+    font-size: 36px;
+    font-weight: bold;
+    line-height: 1;
+  }
+  #ammo .label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    opacity: 0.75;
+    margin-top: 2px;
+  }
+
+  .screen {
+    position: fixed; inset: 0;
+    background: linear-gradient(180deg, rgba(30,10,0,0.9), rgba(60,20,5,0.9));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #e8c98a;
+    text-align: center;
+    z-index: 10;
+    padding: 20px;
+  }
+  .screen h1 {
+    font-size: clamp(40px, 10vw, 72px);
+    letter-spacing: 6px;
+    margin-bottom: 24px;
+    text-shadow: 0 4px 24px rgba(220,120,60,0.7), 0 0 60px rgba(255,150,60,0.3);
+    color: #f0d090;
+  }
+  .screen .subtitle {
+    font-size: 14px;
+    letter-spacing: 3px;
+    color: rgba(240,208,144,0.6);
+    margin-bottom: 40px;
+  }
+  .screen p {
+    font-size: 15px;
+    line-height: 1.9;
+    color: rgba(232,201,138,0.75);
+    margin-bottom: 36px;
+  }
+  .screen .btn-start {
+    padding: 16px 48px;
+    border: 2px solid #e8c98a;
+    border-radius: 10px;
+    background: rgba(200,150,80,0.18);
+    color: #e8c98a;
+    font-size: 18px;
+    letter-spacing: 3px;
+    cursor: pointer;
+    font-family: Georgia, serif;
+    transition: all 0.2s;
+    pointer-events: auto;
+  }
+  .screen .btn-start:hover {
+    background: rgba(200,150,80,0.35);
+    box-shadow: 0 0 24px rgba(220,150,80,0.4);
+  }
+  .screen .score {
+    font-size: 36px;
+    color: #f0dcae;
+    margin: 12px 0;
+    text-shadow: 0 2px 12px rgba(220,150,80,0.5);
+  }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
-<canvas id="игра"></canvas>
-<div id="подсказка">WASD — движение · Мышь — обзор · ЛКМ — огонь · R — перезарядка · Q — Меткий глаз · Shift — бег</div>
+<canvas id="game"></canvas>
 
+<div id="ui">
+  <div id="fps">— FPS</div>
+  <div id="hud">
+    <div class="label">ЗДОРОВЬЕ</div>
+    <div class="bar"><div class="fill" id="hpFill" style="width:100%"></div></div>
+  </div>
+  <div id="ammo">
+    <div class="num" id="ammoNum">6</div>
+    <div class="label">ПАТРОНЫ</div>
+  </div>
+  <div class="btn" id="btnFire" style="width:110px;height:110px;font-size:16px;letter-spacing:2px">ОГОНЬ</div>
+  <div class="btn" id="btnReload" style="width:64px;height:64px;font-size:12px">ПЕР</div>
+  <div class="btn" id="btnHorse" style="width:64px;height:64px;font-size:12px">КОНЬ</div>
+</div>
+
+<div id="menu" class="screen">
+  <h1>RED DEAD 3D</h1>
+  <div class="subtitle">В Е С Т Е Р Н &nbsp; О Т &nbsp; Т Р Е Т Ь Е Г О &nbsp; Л И Ц А</div>
+  <p id="menuHelp">
+    Левый палец — движение<br>
+    Правый палец — камера<br>
+    Кнопки справа — действия
+  </p>
+  <button class="btn-start" id="startBtn">НАЧАТЬ</button>
+</div>
+
+<div id="gameover" class="screen hidden">
+  <h1>ТЫ ПОГИБ</h1>
+  <div class="score" id="finalScore">$ 0</div>
+  <p>Врагов уложено: <span id="finalKills">0</span></p>
+  <button class="btn-start" id="restartBtn">ЗАНОВО</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
+(function() {
 'use strict';
 
-/* ==========================================================
-   RED DEAD 3D
-   Полноценный 3D-шутер от первого лица на raycasting.
-   Все текстуры и оружие рисуются процедурно через canvas.
-   Работает на ПК и iPad.
-   ========================================================== */
-
-/* ==========================================================
-   1. ОПРЕДЕЛЕНИЕ ТИПА УСТРОЙСТВА
-   ========================================================== */
+// ============================================================
+// 1. ОПРЕДЕЛЕНИЕ УСТРОЙСТВА
+// ============================================================
 const ЭТО_ТАЧ = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 
-/* ==========================================================
-   2. РАЗМЕРЫ И РАЗРЕШЕНИЕ
-   ========================================================== */
-const РАЗМЕР_ТЕКСТУРЫ = 128;               // размер одной текстуры
-const МАСКА_ТЕКСТУРЫ = РАЗМЕР_ТЕКСТУРЫ - 1;
+// ============================================================
+// 2. THREE.JS — БАЗА
+// ============================================================
+const canvas = document.getElementById('game');
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  antialias: true,
+  powerPreference: 'high-performance'
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x9a5a3a);
 
-const РАЗМЕР_КАРТЫ = 32;
-const КАРТА = new Uint8Array(РАЗМЕР_КАРТЫ * РАЗМЕР_КАРТЫ);
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x9a5a3a, 30, 130);
 
-const ПЛОСКОСТЬ_X = 0.70;                  // половина ширины плоскости проекции (FOV ≈ 70°)
-const МАКС_ГЛУБИНА = 32;                   // туман — максимальная видимая глубина
+const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 500);
 
-/* Высокое внутреннее разрешение — чтобы не было пикселей */
-let ШИРИНА_БУФ = 640;
-let ВЫСОТА_БУФ = 400;
+// ============================================================
+// 3. НЕБО (градиентный шейдер)
+// ============================================================
+const skyGeo = new THREE.SphereGeometry(280, 24, 16);
+const skyMat = new THREE.ShaderMaterial({
+  uniforms: {
+    topColor: { value: new THREE.Color(0x2a1520) },
+    midColor: { value: new THREE.Color(0x9a5a3a) },
+    botColor: { value: new THREE.Color(0xe8a870) }
+  },
+  vertexShader: `
+    varying vec3 vPos;
+    void main() {
+      vPos = position;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform vec3 topColor;
+    uniform vec3 midColor;
+    uniform vec3 botColor;
+    varying vec3 vPos;
+    void main() {
+      float h = normalize(vPos).y;
+      vec3 col;
+      if (h > 0.0) {
+        col = mix(midColor, topColor, pow(h, 0.65));
+      } else {
+        col = mix(midColor, botColor, pow(-h, 0.45));
+      }
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `,
+  side: THREE.BackSide,
+  depthWrite: false,
+  fog: false
+});
+const sky = new THREE.Mesh(skyGeo, skyMat);
+scene.add(sky);
 
-let imageData = null;
-let буфер = null;
-const буферГлубины = new Float32Array(2048);
+// ============================================================
+// 4. СВЕТ
+// ============================================================
+scene.add(new THREE.AmbientLight(0xd4a070, 0.85));
 
-/* ==========================================================
-   3. ХОЛСТЫ
-   ========================================================== */
-const холст = document.getElementById('игра');
-const ctx = холст.getContext('2d', { alpha: false });
+const sun = new THREE.DirectionalLight(0xffb080, 0.55);
+sun.position.set(-30, 40, -50);
+scene.add(sun);
 
-const offCanvas = document.createElement('canvas');
-const offCtx = offCanvas.getContext('2d', { alpha: false });
+scene.add(new THREE.HemisphereLight(0xffb080, 0x4a2a10, 0.35));
 
-let Ш_ЭКРАНА = 0, В_ЭКРАНА = 0;
+// ============================================================
+// 5. ЗЕМЛЯ И УЛИЦА
+// ============================================================
+const groundGeo = new THREE.PlaneGeometry(400, 400);
+const groundMat = new THREE.MeshLambertMaterial({ color: 0x8a5a3a });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
 
-function настроитьРазмер() {
-  Ш_ЭКРАНА = window.innerWidth;
-  В_ЭКРАНА = window.innerHeight;
+const streetGeo = new THREE.PlaneGeometry(14, 180);
+const streetMat = new THREE.MeshLambertMaterial({ color: 0x9a6a44 });
+const street = new THREE.Mesh(streetGeo, streetMat);
+street.rotation.x = -Math.PI / 2;
+street.position.y = 0.02;
+scene.add(street);
 
-  холст.width  = Ш_ЭКРАНА;
-  холст.height = В_ЭКРАНА;
-  холст.style.width  = Ш_ЭКРАНА + 'px';
-  холст.style.height = В_ЭКРАНА + 'px';
-
-  /* Внутреннее разрешение — высокое, чтобы не было пикселей */
-  const пропорция = Ш_ЭКРАНА / В_ЭКРАНА;
-
-  if (ЭТО_ТАЧ) {
-    ВЫСОТА_БУФ = Math.min(440, Math.round(В_ЭКРАНА * 0.55));
-    if (ВЫСОТА_БУФ < 300) ВЫСОТА_БУФ = 300;
-  } else {
-    ВЫСОТА_БУФ = 500;
-  }
-
-  ШИРИНА_БУФ = Math.round(ВЫСОТА_БУФ * пропорция);
-  if (ШИРИНА_БУФ > 1000) ШИРИНА_БУФ = 1000;
-  if (ШИРИНА_БУФ < 320) ШИРИНА_БУФ = 320;
-
-  offCanvas.width  = ШИРИНА_БУФ;
-  offCanvas.height = ВЫСОТА_БУФ;
-
-  imageData = offCtx.createImageData(ШИРИНА_БУФ, ВЫСОТА_БУФ);
-  буфер = new Uint32Array(imageData.data.buffer);
-
-  /* Сглаживание при масштабировании */
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-}
-
-window.addEventListener('resize', настроитьРазмер);
-window.addEventListener('orientationchange', () => setTimeout(настроитьРазмер, 150));
-настроитьРазмер();
-
-/* ==========================================================
-   4. УТИЛИТЫ
-   ========================================================== */
-const ДВА_ПИ = Math.PI * 2;
-const случ   = (a, b) => a + Math.random() * (b - a);
-const огр    = (v, a, b) => v < a ? a : (v > b ? b : v);
-const раст   = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
-
-function цвет(r, g, b, a = 255) {
-  return ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
-}
-
-/* Плавная интерполяция */
-function смешать(ц1, ц2, t) {
-  const r1 = ц1 & 0xff,       g1 = (ц1 >> 8) & 0xff,  b1 = (ц1 >> 16) & 0xff;
-  const r2 = ц2 & 0xff,       g2 = (ц2 >> 8) & 0xff,  b2 = (ц2 >> 16) & 0xff;
-  return цвет(
-    (r1 + (r2 - r1) * t) | 0,
-    (g1 + (g2 - g1) * t) | 0,
-    (b1 + (b2 - b1) * t) | 0
-  );
-}
-
-/* ==========================================================
-   5. ПРОЦЕДУРНЫЕ ТЕКСТУРЫ (128×128, детальные)
-   ========================================================== */
-function извлечьТекстуру(painter) {
+// ============================================================
+// 6. ЗДАНИЯ
+// ============================================================
+function makeSignTexture(text) {
   const c = document.createElement('canvas');
-  c.width = c.height = РАЗМЕР_ТЕКСТУРЫ;
-  const cx = c.getContext('2d');
-  painter(cx, РАЗМЕР_ТЕКСТУРЫ);
-  const img = cx.getImageData(0, 0, РАЗМЕР_ТЕКСТУРЫ, РАЗМЕР_ТЕКСТУРЫ);
-  const out = new Uint32Array(РАЗМЕР_ТЕКСТУРЫ * РАЗМЕР_ТЕКСТУРЫ);
-  for (let i = 0; i < out.length; i++) {
-    const r = img.data[i * 4];
-    const g = img.data[i * 4 + 1];
-    const b = img.data[i * 4 + 2];
-    const a = img.data[i * 4 + 3];
-    out[i] = ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
-  }
-  return out;
+  c.width = 256; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#e8d8a8';
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.strokeStyle = '#2a1a08';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(4, 4, 248, 56);
+  ctx.fillStyle = '#2a1a08';
+  ctx.font = 'bold 30px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 128, 34);
+  return new THREE.CanvasTexture(c);
 }
 
-/* ---------- Деревянная стена (высокая детализация) ---------- */
-function текстураДерево(cx, s) {
-  /* База — градиент от тёплого к тёмному */
-  const базГр = cx.createLinearGradient(0, 0, 0, s);
-  базГр.addColorStop(0, '#7a4f2a');
-  базГр.addColorStop(0.5, '#6d4423');
-  базГр.addColorStop(1, '#82522c');
-  cx.fillStyle = базГр;
-  cx.fillRect(0, 0, s, s);
+function createBuilding(w, h, d, signText, wallColor) {
+  const g = new THREE.Group();
+  const col = wallColor !== undefined ? wallColor : (0x3a2518 + Math.floor(Math.random() * 0x181010));
 
-  /* Вертикальные доски */
-  const полос = 6;
-  const ширина = s / полос;
+  const bodyMat = new THREE.MeshLambertMaterial({ color: col });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bodyMat);
+  body.position.y = h / 2;
+  g.add(body);
 
-  for (let i = 0; i < полос; i++) {
-    const x = i * ширина;
-    /* Основа доски с лёгкой вариацией */
-    const отт = 0.92 + Math.random() * 0.16;
-    const r0 = Math.floor(122 * отт);
-    const g0 = Math.floor(78 * отт);
-    const b0 = Math.floor(42 * отт);
-    cx.fillStyle = 'rgb(' + r0 + ',' + g0 + ',' + b0 + ')';
-    cx.fillRect(x, 0, ширина - 1, s);
+  const roofMat = new THREE.MeshLambertMaterial({ color: 0x1a0f08 });
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.5, 0.2, d + 0.5), roofMat);
+  roof.position.y = h + 0.1;
+  g.add(roof);
 
-    /* Множество волокон по всей высоте */
-    for (let j = 0; j < 90; j++) {
-      const яр = Math.random();
-      let ц;
-      if (яр < 0.4) ц = 'rgba(50,30,15,' + (0.15 + Math.random() * 0.3) + ')';
-      else if (яр < 0.75) ц = 'rgba(180,120,70,' + (0.10 + Math.random() * 0.25) + ')';
-      else ц = 'rgba(90,55,25,' + (0.15 + Math.random() * 0.25) + ')';
+  // Дверь
+  const doorMat = new THREE.MeshLambertMaterial({ color: 0x1a0a05 });
+  const door = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.0, 0.08), doorMat);
+  door.position.set(0, 1.0, d / 2 + 0.05);
+  g.add(door);
 
-      cx.fillStyle = ц;
-      const волY = Math.random() * s;
-      const волДл = 5 + Math.random() * 40;
-      const волТолщ = 0.5 + Math.random() * 1.2;
-      cx.fillRect(x + 1 + Math.random() * (ширина - 3), волY, волТолщ, волДл);
-    }
-
-    /* Сучки */
-    if (Math.random() < 0.4) {
-      const сучX = x + 3 + Math.random() * (ширина - 6);
-      const сучY = 10 + Math.random() * (s - 20);
-      const сучR = 2 + Math.random() * 3.5;
-      const сучГр = cx.createRadialGradient(сучX, сучY, 0, сучX, сучY, сучR);
-      сучГр.addColorStop(0, 'rgba(40,22,10,0.9)');
-      сучГр.addColorStop(0.5, 'rgba(70,40,20,0.7)');
-      сучГр.addColorStop(1, 'rgba(90,55,25,0)');
-      cx.fillStyle = сучГр;
-      cx.beginPath();
-      cx.arc(сучX, сучY, сучR, 0, ДВА_ПИ);
-      cx.fill();
-      cx.strokeStyle = 'rgba(40,22,10,0.6)';
-      cx.lineWidth = 0.6;
-      cx.beginPath();
-      cx.ellipse(сучX, сучY, сучR * 0.6, сучR * 1.4, 0, 0, ДВА_ПИ);
-      cx.stroke();
-    }
-
-    /* Тёмный шов между досками */
-    cx.fillStyle = 'rgba(20,10,5,0.85)';
-    cx.fillRect(x + ширина - 1.5, 0, 2, s);
-    /* Лёгкий светлый край */
-    cx.fillStyle = 'rgba(200,150,90,0.15)';
-    cx.fillRect(x + ширина - 3.5, 0, 1, s);
+  // Окна
+  const winMat = new THREE.MeshBasicMaterial({ color: 0xffb866 });
+  for (let i = -1; i <= 1; i += 2) {
+    const win = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.85), winMat);
+    win.position.set(i * (w / 3.6), h * 0.6, d / 2 + 0.06);
+    g.add(win);
   }
 
-  /* Винтажные гвозди */
-  cx.fillStyle = 'rgba(30,20,10,0.9)';
-  for (let i = 0; i < полос; i++) {
-    for (let j = 0; j < 4; j++) {
-      const x = i * ширина + 4 + Math.random() * 4;
-      const y = 15 + j * (s - 30) / 3 + Math.random() * 6;
-      cx.beginPath();
-      cx.arc(x, y, 1.2, 0, ДВА_ПИ);
-      cx.fill();
-      cx.fillStyle = 'rgba(180,140,90,0.4)';
-      cx.beginPath();
-      cx.arc(x - 0.3, y - 0.3, 0.6, 0, ДВА_ПИ);
-      cx.fill();
-      cx.fillStyle = 'rgba(30,20,10,0.9)';
-    }
+  // Вывеска
+  if (signText) {
+    const signTex = makeSignTexture(signText);
+    const signMat = new THREE.MeshBasicMaterial({ map: signTex });
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.65), signMat);
+    sign.position.set(0, h - 0.55, d / 2 + 0.07);
+    g.add(sign);
   }
 
-  /* Финальное затемнение по краям */
-  const виг = cx.createRadialGradient(s / 2, s / 2, s * 0.3, s / 2, s / 2, s * 0.75);
-  виг.addColorStop(0, 'rgba(0,0,0,0)');
-  виг.addColorStop(1, 'rgba(0,0,0,0.20)');
-  cx.fillStyle = виг;
-  cx.fillRect(0, 0, s, s);
+  return g;
 }
 
-/* ---------- Кирпичная стена ---------- */
-function текстураКирпич(cx, s) {
-  /* Фон — раствор */
-  cx.fillStyle = '#4a3025';
-  cx.fillRect(0, 0, s, s);
-
-  /* Пятна на растворе */
-  for (let i = 0; i < 200; i++) {
-    cx.fillStyle = 'rgba(' + (30 + Math.random() * 40) + ',' + (20 + Math.random() * 30) + ',' + (15 + Math.random() * 25) + ',' + (0.2 + Math.random() * 0.3) + ')';
-    cx.fillRect(Math.random() * s, Math.random() * s, 1 + Math.random() * 3, 1 + Math.random() * 3);
+// Деревянные столбы-подпорки у фасада
+function addPorchPosts(group, w, d, h) {
+  const mat = new THREE.MeshLambertMaterial({ color: 0x2a180c });
+  const positions = [-w / 2 + 0.4, w / 2 - 0.4];
+  for (const px of positions) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, h, 0.12), mat);
+    post.position.set(px, h / 2, d / 2 + 0.8);
+    group.add(post);
   }
-
-  /* Кирпичи: 8 рядов по 4 штуки, смещение через ряд */
-  const рядов = 8, кирпВРяду = 4;
-  const высота = s / рядов;
-  const шКирп = s / кирпВРяду;
-  const зазор = 2;
-
-  for (let ряд = 0; ряд < рядов; ряд++) {
-    const смещ = (ряд % 2) ? шКирп / 2 : 0;
-
-    for (let к = -1; к <= кирпВРяду; к++) {
-      const x = к * шКирп + смещ + зазор;
-      const y = ряд * высота + зазор;
-      const w = шКирп - зазор * 2;
-      const h = высота - зазор * 2;
-
-      /* Индивидуальный оттенок каждого кирпича */
-      const базГр = cx.createLinearGradient(x, y, x, y + h);
-      const отт = 0.80 + Math.random() * 0.35;
-      const r0 = Math.floor(140 * отт);
-      const g0 = Math.floor(75 * отт);
-      const b0 = Math.floor(52 * отт);
-      const r1 = Math.floor(r0 * 0.72);
-      const g1 = Math.floor(g0 * 0.72);
-      const b1 = Math.floor(b0 * 0.72);
-
-      базГр.addColorStop(0, 'rgb(' + r0 + ',' + g0 + ',' + b0 + ')');
-      базГр.addColorStop(1, 'rgb(' + r1 + ',' + g1 + ',' + b1 + ')');
-      cx.fillStyle = базГр;
-      cx.fillRect(x, y, w, h);
-
-      /* Зернистость кирпича */
-      for (let i = 0; i < 25; i++) {
-        cx.fillStyle = 'rgba(' + (r0 + 30) + ',' + (g0 + 20) + ',' + (b0 + 10) + ',' + (0.15 + Math.random() * 0.25) + ')';
-        cx.fillRect(x + Math.random() * w, y + Math.random() * h, 1, 1);
-      }
-
-      /* Тёмная трещина */
-      if (Math.random() < 0.35) {
-        cx.strokeStyle = 'rgba(40,20,15,0.55)';
-        cx.lineWidth = 0.7;
-        cx.beginPath();
-        let tx = x + Math.random() * w;
-        let ty = y;
-        cx.moveTo(tx, ty);
-        for (let i = 0; i < 4; i++) {
-          tx += (Math.random() - 0.5) * 4;
-          ty += h / 4;
-          cx.lineTo(tx, ty);
-        }
-        cx.stroke();
-      }
-
-      /* Светлый блик сверху */
-      cx.fillStyle = 'rgba(255,200,160,0.10)';
-      cx.fillRect(x, y, w, 1);
-
-      /* Тёмная тень снизу */
-      cx.fillStyle = 'rgba(0,0,0,0.25)';
-      cx.fillRect(x, y + h - 1, w, 1);
-    }
-  }
+  // Навес
+  const canopy = new THREE.Mesh(
+    new THREE.BoxGeometry(w, 0.1, 1.8),
+    new THREE.MeshLambertMaterial({ color: 0x2a180c })
+  );
+  canopy.position.set(0, h - 0.1, d / 2 + 0.9);
+  group.add(canopy);
 }
 
-/* ---------- Каменная стена (крупные блоки) ---------- */
-function текстураКамень(cx, s) {
-  /* Фон — тёмный раствор */
-  cx.fillStyle = '#3a3530';
-  cx.fillRect(0, 0, s, s);
+// Раскладка деревни
+const village = [
+  { x: -14, z: -35, w: 14, h: 3.6, d: 7, sign: 'МАГАЗИН', rot: Math.PI / 2 },
+  { x: -14, z: -18, w: 10, h: 3.3, d: 7, sign: null,     rot: Math.PI / 2 },
+  { x: -14, z:   0, w: 12, h: 3.7, d: 7, sign: 'САЛУН',   rot: Math.PI / 2 },
+  { x: -14, z:  18, w: 10, h: 3.3, d: 7, sign: null,     rot: Math.PI / 2 },
+  { x:  14, z: -35, w: 12, h: 3.4, d: 7, sign: null,     rot: -Math.PI / 2 },
+  { x:  14, z: -18, w: 10, h: 3.3, d: 7, sign: 'БАНК',   rot: -Math.PI / 2 },
+  { x:  14, z:   0, w: 14, h: 3.7, d: 7, sign: null,     rot: -Math.PI / 2 },
+  { x:  14, z:  18, w: 10, h: 3.3, d: 7, sign: null,     rot: -Math.PI / 2 }
+];
 
-  /* Крупные каменные блоки — сетка с неровностями */
-  const блоковПо = 4;
-  const разм = s / блоковПо;
-
-  for (let j = 0; j < блоковПо; j++) {
-    for (let i = 0; i < блоковПо; i++) {
-      const x0 = i * разм + 2;
-      const y0 = j * разм + 2;
-      const w = разм - 4;
-      const h = разм - 4;
-
-      const отт = 0.75 + Math.random() * 0.4;
-      const r0 = Math.floor(120 * отт);
-      const g0 = Math.floor(115 * отт);
-      const b0 = Math.floor(108 * отт);
-
-      /* Основа блока */
-      cx.fillStyle = 'rgb(' + r0 + ',' + g0 + ',' + b0 + ')';
-      cx.fillRect(x0, y0, w, h);
-
-      /* Неровные края — отщипываем углы */
-      cx.fillStyle = '#3a3530';
-      cx.beginPath();
-      cx.moveTo(x0, y0);
-      cx.lineTo(x0 + 3 + Math.random() * 5, y0);
-      cx.lineTo(x0, y0 + 3 + Math.random() * 5);
-      cx.closePath();
-      cx.fill();
-
-      cx.beginPath();
-      cx.moveTo(x0 + w, y0);
-      cx.lineTo(x0 + w - 3 - Math.random() * 5, y0);
-      cx.lineTo(x0 + w, y0 + 3 + Math.random() * 5);
-      cx.closePath();
-      cx.fill();
-
-      /* Зернистость блока */
-      for (let k = 0; k < 60; k++) {
-        const т = Math.random();
-        const кр = (r0 + (т < 0.5 ? -30 : 30)) | 0;
-        const кг = (g0 + (т < 0.5 ? -30 : 30)) | 0;
-        const кб = (b0 + (т < 0.5 ? -30 : 30)) | 0;
-        cx.fillStyle = 'rgba(' + кр + ',' + кг + ',' + кб + ',' + (0.2 + Math.random() * 0.3) + ')';
-        cx.fillRect(x0 + Math.random() * w, y0 + Math.random() * h, 1, 1);
-      }
-
-      /* Тёмные трещины */
-      if (Math.random() < 0.5) {
-        cx.strokeStyle = 'rgba(30,25,20,0.65)';
-        cx.lineWidth = 0.9;
-        cx.beginPath();
-        let tx = x0 + w * 0.3 + Math.random() * w * 0.4;
-        let ty = y0 + Math.random() * h;
-        cx.moveTo(tx, ty);
-        for (let i = 0; i < 5; i++) {
-          tx += (Math.random() - 0.5) * 8;
-          ty += (Math.random() - 0.5) * 8;
-          cx.lineTo(tx, ty);
-        }
-        cx.stroke();
-      }
-
-      /* Светлый верхний край */
-      cx.fillStyle = 'rgba(255,240,220,0.15)';
-      cx.fillRect(x0, y0, w, 1);
-
-      /* Тёмный нижний край */
-      cx.fillStyle = 'rgba(0,0,0,0.35)';
-      cx.fillRect(x0, y0 + h - 1, w, 1);
-    }
-  }
+for (const b of village) {
+  const g = createBuilding(b.w, b.h, b.d, b.sign);
+  addPorchPosts(g, b.w, b.d, b.h);
+  g.position.set(b.x, 0, b.z);
+  g.rotation.y = b.rot;
+  scene.add(g);
 }
 
-/* ---------- Дверь ---------- */
-function текстураДверь(cx, s) {
-  /* Тёмное дерево */
-  const базГр = cx.createLinearGradient(0, 0, s, 0);
-  базГр.addColorStop(0, '#5a3a20');
-  базГр.addColorStop(0.5, '#6a4525');
-  базГр.addColorStop(1, '#5a3a20');
-  cx.fillStyle = базГр;
-  cx.fillRect(0, 0, s, s);
+// Здание шерифа в конце улицы
+const sheriff = createBuilding(16, 4.5, 10, 'ШЕРИФ', 0x3a2010);
+sheriff.position.set(0, 0, -55);
+scene.add(sheriff);
 
-  /* Вертикальные волокна */
-  for (let i = 0; i < 400; i++) {
-    const яр = Math.random();
-    let ц;
-    if (яр < 0.5) ц = 'rgba(40,25,12,' + (0.12 + Math.random() * 0.22) + ')';
-    else ц = 'rgba(140,95,55,' + (0.10 + Math.random() * 0.2) + ')';
-    cx.fillStyle = ц;
-    cx.fillRect(Math.random() * s, Math.random() * s, 0.8 + Math.random() * 1.5, 3 + Math.random() * 25);
-  }
+// ============================================================
+// 7. ФОНАРИ
+// ============================================================
+function addLampPost(x, z) {
+  const g = new THREE.Group();
+  const postMat = new THREE.MeshLambertMaterial({ color: 0x1a0f08 });
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 3.2, 6), postMat);
+  post.position.y = 1.6;
+  g.add(post);
 
-  /* Массивная внешняя рамка */
-  cx.fillStyle = '#3a2412';
-  cx.fillRect(0, 0, s, 5);
-  cx.fillRect(0, s - 5, s, 5);
-  cx.fillRect(0, 0, 5, s);
-  cx.fillRect(s - 5, 0, 5, s);
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xffd080 });
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), lampMat);
+  lamp.position.y = 3.3;
+  g.add(lamp);
 
-  /* Блик на рамке */
-  cx.fillStyle = 'rgba(200,140,80,0.25)';
-  cx.fillRect(5, 5, s - 10, 1);
-  cx.fillRect(5, 5, 1, s - 10);
+  const glowMat = new THREE.SpriteMaterial({
+    color: 0xffd080,
+    transparent: true,
+    opacity: 0.45,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  const glow = new THREE.Sprite(glowMat);
+  glow.scale.set(2.5, 2.5, 1);
+  glow.position.y = 3.3;
+  g.add(glow);
 
-  /* Горизонтальная средняя планка */
-  cx.fillStyle = '#3a2412';
-  cx.fillRect(5, s / 2 - 3, s - 10, 6);
-  cx.fillStyle = 'rgba(200,140,80,0.20)';
-  cx.fillRect(5, s / 2 - 3, s - 10, 1);
-
-  /* Две филёнки */
-  function филёнка(px, py, pw, ph) {
-    /* Тень */
-    cx.fillStyle = 'rgba(0,0,0,0.35)';
-    cx.fillRect(px, py, pw, ph);
-    /* Внутренняя часть */
-    cx.fillStyle = '#6a4525';
-    cx.fillRect(px + 2, py + 2, pw - 4, ph - 4);
-    /* Верхний блик */
-    cx.fillStyle = 'rgba(200,150,90,0.30)';
-    cx.fillRect(px + 2, py + 2, pw - 4, 2);
-    /* Нижняя тень */
-    cx.fillStyle = 'rgba(0,0,0,0.4)';
-    cx.fillRect(px + 2, py + ph - 4, pw - 4, 2);
-  }
-
-  филёнка(10, 10, s - 20, s / 2 - 20);
-  филёнка(10, s / 2 + 5, s - 20, s / 2 - 20);
-
-  /* Металлическая накладка под ручку */
-  cx.fillStyle = '#5a4a30';
-  cx.fillRect(s - 22, s / 2 - 6, 14, 12);
-  cx.fillStyle = 'rgba(220,180,100,0.4)';
-  cx.fillRect(s - 22, s / 2 - 6, 14, 2);
-
-  /* Ручка — круглая металлическая */
-  cx.fillStyle = '#1a1a20';
-  cx.beginPath();
-  cx.arc(s - 14, s / 2, 4.5, 0, ДВА_ПИ);
-  cx.fill();
-
-  cx.fillStyle = '#d9b23a';
-  cx.beginPath();
-  cx.arc(s - 14, s / 2, 3.5, 0, ДВА_ПИ);
-  cx.fill();
-
-  /* Блик на ручке */
-  cx.fillStyle = 'rgba(255,240,180,0.7)';
-  cx.beginPath();
-  cx.arc(s - 15, s / 2 - 1, 1.4, 0, ДВА_ПИ);
-  cx.fill();
-
-  /* Замочная скважина */
-  cx.fillStyle = '#0a0505';
-  cx.beginPath();
-  cx.arc(s - 14, s / 2 + 10, 1.6, 0, ДВА_ПИ);
-  cx.fill();
-  cx.fillRect(s - 14.8, s / 2 + 10, 1.6, 4);
+  g.position.set(x, 0, z);
+  scene.add(g);
 }
 
-/* ---------- Металлическая стена (ржавая) ---------- */
-function текстураМеталл(cx, s) {
-  /* Основа */
-  const базГр = cx.createLinearGradient(0, 0, s, s);
-  базГр.addColorStop(0, '#5a5045');
-  базГр.addColorStop(0.5, '#4a4038');
-  базГр.addColorStop(1, '#3a3028');
-  cx.fillStyle = базГр;
-  cx.fillRect(0, 0, s, s);
+addLampPost(-6.5, -8);
+addLampPost(6.5, -8);
+addLampPost(-6.5, 10);
+addLampPost(6.5, 10);
 
-  /* Ржавые пятна */
-  for (let i = 0; i < 60; i++) {
-    const x = Math.random() * s;
-    const y = Math.random() * s;
-    const r = 3 + Math.random() * 12;
-    const г = cx.createRadialGradient(x, y, 0, x, y, r);
-    const т = 0.5 + Math.random() * 0.5;
-    г.addColorStop(0, 'rgba(' + (140 * т + 40) + ',' + (70 * т + 20) + ',' + (30 * т) + ',0.75)');
-    г.addColorStop(1, 'rgba(90,60,40,0)');
-    cx.fillStyle = г;
-    cx.beginPath();
-    cx.arc(x, y, r, 0, ДВА_ПИ);
-    cx.fill();
+// ============================================================
+// 8. ЗАБОРЫ
+// ============================================================
+function addFence(x, z, length, rot) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: 0x3a2010 });
+  const count = Math.floor(length / 2.2);
+  for (let i = 0; i < count; i++) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.15, 0.14), mat);
+    post.position.set(-length / 2 + i * 2.2 + 1.1, 0.575, 0);
+    g.add(post);
   }
-
-  /* Вертикальные заклёпки */
-  for (let i = 0; i < 8; i++) {
-    for (let j = 0; j < 8; j++) {
-      const x = (i + 0.5) * s / 8;
-      const y = (j + 0.5) * s / 8;
-      /* Тело заклёпки */
-      cx.fillStyle = '#2a2520';
-      cx.beginPath();
-      cx.arc(x, y, 2, 0, ДВА_ПИ);
-      cx.fill();
-      /* Блик */
-      cx.fillStyle = 'rgba(220,200,170,0.5)';
-      cx.beginPath();
-      cx.arc(x - 0.6, y - 0.6, 1, 0, ДВА_ПИ);
-      cx.fill();
-      /* Тень */
-      cx.fillStyle = 'rgba(0,0,0,0.4)';
-      cx.beginPath();
-      cx.arc(x + 0.6, y + 0.6, 0.8, 0, ДВА_ПИ);
-      cx.fill();
-    }
-  }
-
-  /* Царапины */
-  for (let i = 0; i < 20; i++) {
-    cx.strokeStyle = 'rgba(' + (180 + Math.random() * 60) + ',' + (160 + Math.random() * 60) + ',' + (140 + Math.random() * 60) + ',0.35)';
-    cx.lineWidth = 0.6;
-    cx.beginPath();
-    let x = Math.random() * s;
-    let y = Math.random() * s;
-    cx.moveTo(x, y);
-    const дл = 5 + Math.random() * 20;
-    const уг = Math.random() * ДВА_ПИ;
-    cx.lineTo(x + Math.cos(уг) * дл, y + Math.sin(уг) * дл);
-    cx.stroke();
-  }
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(length, 0.08, 0.08), mat);
+  rail.position.y = 0.7; g.add(rail);
+  const rail2 = rail.clone(); rail2.position.y = 1.0; g.add(rail2);
+  g.position.set(x, 0, z);
+  g.rotation.y = rot;
+  scene.add(g);
 }
 
-/* ---------- Песок (пол) ---------- */
-function текстураПесок(cx, s) {
-  /* Градиент основы */
-  const базГр = cx.createLinearGradient(0, 0, s, s);
-  базГр.addColorStop(0, '#cf9f5e');
-  базГр.addColorStop(0.5, '#c49450');
-  базГр.addColorStop(1, '#b98a4a');
-  cx.fillStyle = базГр;
-  cx.fillRect(0, 0, s, s);
+addFence(-25, -20, 24, Math.PI / 2);
+addFence(25, -20, 24, Math.PI / 2);
+addFence(-25, 20, 24, Math.PI / 2);
+addFence(25, 20, 24, Math.PI / 2);
 
-  /* Крупные пятна разного оттенка */
-  for (let i = 0; i < 40; i++) {
-    const x = Math.random() * s, y = Math.random() * s;
-    const r = 6 + Math.random() * 18;
-    const г = cx.createRadialGradient(x, y, 1, x, y, r);
-    const светл = Math.random() < 0.5;
-    if (светл) {
-      г.addColorStop(0, 'rgba(220,180,120,0.30)');
-      г.addColorStop(1, 'rgba(220,180,120,0)');
-    } else {
-      г.addColorStop(0, 'rgba(140,100,55,0.30)');
-      г.addColorStop(1, 'rgba(140,100,55,0)');
-    }
-    cx.fillStyle = г;
-    cx.beginPath();
-    cx.arc(x, y, r, 0, ДВА_ПИ);
-    cx.fill();
+// ============================================================
+// 9. КОВБОЙ (меш)
+// ============================================================
+function createCowboy(coatColor) {
+  const g = new THREE.Group();
+
+  const legMat = new THREE.MeshLambertMaterial({ color: 0x2a1c12 });
+  const leg1 = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.85, 0.22), legMat);
+  leg1.position.set(-0.15, 0.425, 0);
+  g.add(leg1);
+  const leg2 = leg1.clone();
+  leg2.position.x = 0.15;
+  g.add(leg2);
+
+  const bodyMat = new THREE.MeshLambertMaterial({ color: coatColor });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.7, 0.4), bodyMat);
+  body.position.y = 1.2;
+  g.add(body);
+
+  const arm1 = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.65, 0.18), bodyMat);
+  arm1.position.set(-0.4, 1.2, 0);
+  g.add(arm1);
+  const arm2 = arm1.clone();
+  arm2.position.x = 0.4;
+  g.add(arm2);
+
+  // Голова
+  const headMat = new THREE.MeshLambertMaterial({ color: 0xd9a679 });
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.23, 10, 8), headMat);
+  head.position.y = 1.78;
+  g.add(head);
+
+  // Шляпа
+  const hatMat = new THREE.MeshLambertMaterial({ color: 0x1a0f08 });
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.06, 12), hatMat);
+  brim.position.y = 1.93;
+  g.add(brim);
+  const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.22, 0.26, 12), hatMat);
+  crown.position.y = 2.08;
+  g.add(crown);
+
+  // Бандана на голове (для врагов)
+  if (coatColor !== 0x4a3a6b) {
+    const bandMat = new THREE.MeshLambertMaterial({ color: 0xb02020 });
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.235, 0.235, 0.1, 10), bandMat);
+    band.position.y = 1.66;
+    g.add(band);
   }
 
-  /* Мелкие песчинки */
-  for (let i = 0; i < 4000; i++) {
-    const т = Math.random();
-    let r0, g0, b0, a0;
-    if (т < 0.35) { r0 = 180; g0 = 130; b0 = 70; a0 = 0.2 + Math.random() * 0.3; }
-    else if (т < 0.7) { r0 = 220; g0 = 175; b0 = 110; a0 = 0.15 + Math.random() * 0.25; }
-    else if (т < 0.9) { r0 = 140; g0 = 100; b0 = 55; a0 = 0.2 + Math.random() * 0.3; }
-    else { r0 = 90; g0 = 65; b0 = 40; a0 = 0.25 + Math.random() * 0.3; }
-    cx.fillStyle = 'rgba(' + r0 + ',' + g0 + ',' + b0 + ',' + a0 + ')';
-    cx.fillRect(Math.random() * s, Math.random() * s, 1, 1);
-  }
+  g.userData.legs = [leg1, leg2];
+  g.userData.body = body;
 
-  /* Камешки */
-  for (let i = 0; i < 80; i++) {
-    const x = Math.random() * s, y = Math.random() * s;
-    const r = 1 + Math.random() * 2.5;
-    cx.fillStyle = 'rgba(80,60,40,0.7)';
-    cx.beginPath();
-    cx.arc(x, y, r, 0, ДВА_ПИ);
-    cx.fill();
-    cx.fillStyle = 'rgba(220,190,140,0.5)';
-    cx.beginPath();
-    cx.arc(x - 0.5, y - 0.5, r * 0.5, 0, ДВА_ПИ);
-    cx.fill();
-    cx.fillStyle = 'rgba(0,0,0,0.3)';
-    cx.beginPath();
-    cx.arc(x + 0.5, y + 0.5, r * 0.4, 0, ДВА_ПИ);
-    cx.fill();
-  }
-
-  /* Травинки — сухие */
-  for (let i = 0; i < 50; i++) {
-    const x = Math.random() * s, y = Math.random() * s;
-    cx.strokeStyle = 'rgba(' + (110 + Math.random() * 40) + ',' + (110 + Math.random() * 40) + ',' + (50 + Math.random() * 30) + ',0.5)';
-    cx.lineWidth = 0.7;
-    cx.beginPath();
-    cx.moveTo(x, y);
-    const дл = 2 + Math.random() * 3;
-    cx.quadraticCurveTo(x + (Math.random() - 0.5) * 2, y - дл * 0.5,
-                        x + (Math.random() - 0.5) * 3, y - дл);
-    cx.stroke();
-  }
+  return g;
 }
 
-/* ---------- Спрайт ковбоя (врага) ---------- */
-function спрайтКовбой(cx, s) {
-  cx.clearRect(0, 0, s, s);
-  const ц = s / 2;
+// ============================================================
+// 10. КОНЬ (меш)
+// ============================================================
+function createHorse() {
+  const g = new THREE.Group();
 
-  /* Мягкая тень внизу спрайта */
-  const теньГр = cx.createRadialGradient(ц, s * 0.97, 2, ц, s * 0.97, s * 0.2);
-  теньГр.addColorStop(0, 'rgba(0,0,0,0.55)');
-  теньГр.addColorStop(1, 'rgba(0,0,0,0)');
-  cx.fillStyle = теньГр;
-  cx.beginPath();
-  cx.ellipse(ц, s * 0.97, s * 0.18, s * 0.04, 0, 0, ДВА_ПИ);
-  cx.fill();
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x4a2f1c });
+  const darkMat = new THREE.MeshLambertMaterial({ color: 0x2a1808 });
 
-  /* === НОГИ === */
-  cx.fillStyle = '#2a1c12';
-  cx.fillRect(ц - 9, s * 0.72, 7, s * 0.24);
-  cx.fillRect(ц + 2, s * 0.72, 7, s * 0.24);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.95, 2.0), bodyMat);
+  body.position.y = 1.25;
+  g.add(body);
 
-  /* Обводка */
-  cx.strokeStyle = '#0f0804';
-  cx.lineWidth = 1;
-  cx.strokeRect(ц - 9, s * 0.72, 7, s * 0.24);
-  cx.strokeRect(ц + 2, s * 0.72, 7, s * 0.24);
+  const neck = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.9, 0.55), bodyMat);
+  neck.position.set(0, 1.85, -0.85);
+  neck.rotation.x = -0.3;
+  g.add(neck);
 
-  /* Ботинки */
-  cx.fillStyle = '#1a1008';
-  cx.beginPath();
-  cx.ellipse(ц - 6, s * 0.96, 5, 2, 0, 0, ДВА_ПИ);
-  cx.fill();
-  cx.beginPath();
-  cx.ellipse(ц + 5, s * 0.96, 5, 2, 0, 0, ДВА_ПИ);
-  cx.fill();
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.5, 0.9), bodyMat);
+  head.position.set(0, 2.25, -1.35);
+  g.add(head);
 
-  /* === ПАЛЬТО === */
-  /* Основа пальто с градиентом */
-  const пальтоГр = cx.createLinearGradient(ц - 14, 0, ц + 14, 0);
-  пальтоГр.addColorStop(0, '#3d1a12');
-  пальтоГр.addColorStop(0.4, '#6a3020');
-  пальтоГр.addColorStop(1, '#3d1a12');
-  cx.fillStyle = пальтоГр;
-  cx.beginPath();
-  cx.moveTo(ц - 13, s * 0.42);
-  cx.lineTo(ц + 13, s * 0.42);
-  cx.lineTo(ц + 11, s * 0.76);
-  cx.lineTo(ц - 11, s * 0.76);
-  cx.closePath();
-  cx.fill();
+  const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.3), darkMat);
+  muzzle.position.set(0, 2.1, -1.75);
+  g.add(muzzle);
 
-  /* Тёмная обводка пальто */
-  cx.strokeStyle = '#200a05';
-  cx.lineWidth = 1.5;
-  cx.stroke();
+  const legMat = new THREE.MeshLambertMaterial({ color: 0x3a2412 });
+  const legPositions = [[-0.32, -0.65], [0.32, -0.65], [-0.32, 0.65], [0.32, 0.65]];
+  const legs = [];
+  for (const [lx, lz] of legPositions) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.3, 0.18), legMat);
+    leg.position.set(lx, 0.65, lz);
+    g.add(leg);
+    legs.push(leg);
 
-  /* Складки на пальто */
-  cx.strokeStyle = 'rgba(20,8,5,0.5)';
-  cx.lineWidth = 1;
-  cx.beginPath();
-  cx.moveTo(ц - 4, s * 0.44);
-  cx.lineTo(ц - 5, s * 0.75);
-  cx.moveTo(ц + 4, s * 0.44);
-  cx.lineTo(ц + 5, s * 0.75);
-  cx.stroke();
-
-  /* === РУБАШКА === */
-  const рубГр = cx.createLinearGradient(ц - 8, 0, ц + 8, 0);
-  рубГр.addColorStop(0, '#4a1a10');
-  рубГр.addColorStop(0.5, '#8a3520');
-  рубГр.addColorStop(1, '#4a1a10');
-  cx.fillStyle = рубГр;
-  cx.beginPath();
-  cx.moveTo(ц - 7, s * 0.42);
-  cx.lineTo(ц + 7, s * 0.42);
-  cx.lineTo(ц + 6, s * 0.62);
-  cx.lineTo(ц - 6, s * 0.62);
-  cx.closePath();
-  cx.fill();
-
-  /* Пуговицы */
-  cx.fillStyle = '#d9b23a';
-  for (let i = 0; i < 3; i++) {
-    cx.beginPath();
-    cx.arc(ц, s * 0.46 + i * s * 0.05, 1.2, 0, ДВА_ПИ);
-    cx.fill();
-    /* Блик */
-    cx.fillStyle = 'rgba(255,240,180,0.6)';
-    cx.beginPath();
-    cx.arc(ц - 0.3, s * 0.46 + i * s * 0.05 - 0.3, 0.5, 0, ДВА_ПИ);
-    cx.fill();
-    cx.fillStyle = '#d9b23a';
+    const hoof = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 0.24), darkMat);
+    hoof.position.set(lx, 0.07, lz);
+    g.add(hoof);
   }
 
-  /* === ПОЯС === */
-  cx.fillStyle = '#2a1608';
-  cx.fillRect(ц - 13, s * 0.63, 26, s * 0.05);
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.8, 0.15), darkMat);
+  tail.position.set(0, 1.3, 1.1);
+  tail.rotation.x = 0.5;
+  g.add(tail);
 
-  /* Пряжка */
-  cx.fillStyle = '#d9b23a';
-  cx.fillRect(ц - 3, s * 0.635, 6, 5);
-  cx.fillStyle = '#7a5a20';
-  cx.fillRect(ц - 2, s * 0.64, 4, 3);
-  cx.fillStyle = 'rgba(255,240,180,0.5)';
-  cx.fillRect(ц - 3, s * 0.635, 6, 1);
+  const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.2, 0.85), darkMat);
+  saddle.position.y = 1.85;
+  g.add(saddle);
 
-  /* Кобура — просто намёк */
-  cx.fillStyle = '#2a1608';
-  cx.fillRect(ц + 10, s * 0.63, 5, s * 0.10);
-  cx.strokeStyle = '#0f0804';
-  cx.strokeRect(ц + 10, s * 0.63, 5, s * 0.10);
-
-  /* === РУКИ === */
-  /* Левая рука */
-  cx.fillStyle = '#3d1a12';
-  cx.fillRect(ц - 16, s * 0.44, 4, s * 0.22);
-  cx.strokeStyle = '#0f0804';
-  cx.strokeRect(ц - 16, s * 0.44, 4, s * 0.22);
-
-  /* Правая рука */
-  cx.fillStyle = '#3d1a12';
-  cx.fillRect(ц + 12, s * 0.44, 4, s * 0.22);
-  cx.strokeRect(ц + 12, s * 0.44, 4, s * 0.22);
-
-  /* Кисти рук */
-  cx.fillStyle = '#d9a679';
-  cx.beginPath();
-  cx.arc(ц - 14, s * 0.665, 3, 0, ДВА_ПИ);
-  cx.fill();
-  cx.strokeStyle = '#7a4f2a';
-  cx.lineWidth = 0.8;
-  cx.stroke();
-
-  cx.fillStyle = '#d9a679';
-  cx.beginPath();
-  cx.arc(ц + 14, s * 0.665, 3, 0, ДВА_ПИ);
-  cx.fill();
-  cx.stroke();
-
-  /* === РЕВОЛЬВЕР в правой руке === */
-  cx.fillStyle = '#1a1a22';
-  cx.fillRect(ц + 14, s * 0.60, 10, 4);
-  cx.fillStyle = '#0a0a10';
-  cx.fillRect(ц + 14, s * 0.60, 10, 1);
-  /* Барабан */
-  cx.fillStyle = '#3a3a44';
-  cx.beginPath();
-  cx.arc(ц + 16, s * 0.62, 2, 0, ДВА_ПИ);
-  cx.fill();
-  cx.strokeStyle = '#0a0a10';
-  cx.lineWidth = 0.6;
-  cx.stroke();
-
-  /* === ГОЛОВА === */
-  /* Шея */
-  cx.fillStyle = '#c08858';
-  cx.fillRect(ц - 3, s * 0.38, 6, s * 0.05);
-  cx.fillStyle = 'rgba(0,0,0,0.25)';
-  cx.fillRect(ц - 3, s * 0.38, 6, 1);
-
-  /* Лицо */
-  const лицоГр = cx.createRadialGradient(ц - 2, s * 0.31, 1, ц, s * 0.32, 8);
-  лицоГр.addColorStop(0, '#e5b487');
-  лицоГр.addColorStop(0.6, '#d9a679');
-  лицоГр.addColorStop(1, '#b08456');
-  cx.fillStyle = лицоГр;
-  cx.beginPath();
-  cx.arc(ц, s * 0.32, 7, 0, ДВА_ПИ);
-  cx.fill();
-  cx.strokeStyle = '#7a4f2a';
-  cx.lineWidth = 0.8;
-  cx.stroke();
-
-  /* Тень от шляпы на верхней части лица */
-  cx.fillStyle = 'rgba(0,0,0,0.30)';
-  cx.beginPath();
-  cx.arc(ц, s * 0.29, 6.5, Math.PI, ДВА_ПИ);
-  cx.fill();
-
-  /* Глаза — тёмные точки */
-  cx.fillStyle = '#0a0505';
-  cx.fillRect(ц - 3, s * 0.315, 2, 2);
-  cx.fillRect(ц + 1, s * 0.315, 2, 2);
-
-  /* Блик в глазах */
-  cx.fillStyle = 'rgba(255,240,200,0.9)';
-  cx.fillRect(ц - 2.6, s * 0.316, 0.8, 0.8);
-  cx.fillRect(ц + 1.4, s * 0.316, 0.8, 0.8);
-
-  /* Бандана на нижней части лица (у врага) */
-  const бандГр = cx.createLinearGradient(0, s * 0.34, 0, s * 0.37);
-  бандГр.addColorStop(0, '#c02828');
-  бандГр.addColorStop(1, '#8a1818');
-  cx.fillStyle = бандГр;
-  cx.beginPath();
-  cx.moveTo(ц - 7, s * 0.34);
-  cx.lineTo(ц + 7, s * 0.34);
-  cx.lineTo(ц + 6, s * 0.38);
-  cx.lineTo(ц - 6, s * 0.38);
-  cx.closePath();
-  cx.fill();
-
-  /* Складка на бандане */
-  cx.strokeStyle = 'rgba(0,0,0,0.4)';
-  cx.lineWidth = 0.5;
-  cx.beginPath();
-  cx.moveTo(ц - 4, s * 0.35);
-  cx.lineTo(ц - 2, s * 0.37);
-  cx.stroke();
-
-  /* === ШЛЯПА === */
-  /* Поля */
-  const поляГр = cx.createLinearGradient(0, s * 0.26, 0, s * 0.30);
-  поляГр.addColorStop(0, '#3a2418');
-  поляГр.addColorStop(1, '#1a0f08');
-  cx.fillStyle = поляГр;
-  cx.beginPath();
-  cx.ellipse(ц, s * 0.275, 13, 4.5, 0, 0, ДВА_ПИ);
-  cx.fill();
-  cx.strokeStyle = '#0a0504';
-  cx.lineWidth = 0.8;
-  cx.stroke();
-
-  /* Тулья */
-  const тулГр = cx.createLinearGradient(ц - 6, 0, ц + 6, 0);
-  тулГр.addColorStop(0, '#2a1810');
-  тулГр.addColorStop(0.4, '#4a2e1a');
-  тулГр.addColorStop(1, '#2a1810');
-  cx.fillStyle = тулГр;
-  cx.beginPath();
-  cx.ellipse(ц, s * 0.24, 8, 6, 0, 0, ДВА_ПИ);
-  cx.fill();
-  cx.strokeStyle = '#0a0504';
-  cx.stroke();
-
-  /* Лента шляпы */
-  cx.fillStyle = '#1a0a05';
-  cx.beginPath();
-  cx.ellipse(ц, s * 0.265, 8, 1.8, 0, 0, ДВА_ПИ);
-  cx.fill();
-
-  /* Блик на тулье */
-  cx.fillStyle = 'rgba(255,220,160,0.20)';
-  cx.beginPath();
-  cx.ellipse(ц - 3, s * 0.215, 3, 2, -0.4, 0, ДВА_ПИ);
-  cx.fill();
+  g.userData.legs = legs;
+  return g;
 }
 
-/* ---------- Спрайт кактуса ---------- */
-function спрайтКактус(cx, s) {
-  cx.clearRect(0, 0, s, s);
-  const ц = s / 2;
-
-  /* Тень */
-  const теньГр = cx.createRadialGradient(ц, s * 0.97, 2, ц, s * 0.97, s * 0.15);
-  теньГр.addColorStop(0, 'rgba(0,0,0,0.4)');
-  теньГр.addColorStop(1, 'rgba(0,0,0,0)');
-  cx.fillStyle = теньГр;
-  cx.beginPath();
-  cx.ellipse(ц, s * 0.97, s * 0.13, s * 0.03, 0, 0, ДВА_ПИ);
-  cx.fill();
-
-  /* Основной ствол — с градиентом */
-  const стволГр = cx.createLinearGradient(ц - 7, 0, ц + 7, 0);
-  стволГр.addColorStop(0, '#2f5226');
-  стволГр.addColorStop(0.35, '#5a9a48');
-  стволГр.addColorStop(0.6, '#4a7a3a');
-  стволГр.addColorStop(1, '#1f3a18');
-  cx.fillStyle = стволГр;
-  cx.beginPath();
-  cx.moveTo(ц - 7, s * 0.30);
-  cx.lineTo(ц + 7, s * 0.30);
-  cx.lineTo(ц + 8, s * 0.96);
-  cx.lineTo(ц - 8, s * 0.96);
-  cx.closePath();
-  cx.fill();
-  cx.strokeStyle = '#1a3010';
-  cx.lineWidth = 1;
-  cx.stroke();
-
-  /* Рёбра кактуса */
-  cx.strokeStyle = 'rgba(30,60,25,0.6)';
-  cx.lineWidth = 1;
-  for (let i = 0; i < 4; i++) {
-    const xx = ц - 5 + i * 3.3;
-    cx.beginPath();
-    cx.moveTo(xx, s * 0.31);
-    cx.lineTo(xx, s * 0.95);
-    cx.stroke();
-  }
-
-  /* Левая рука */
-  const левРукаГр = cx.createLinearGradient(ц - 16, 0, ц - 6, 0);
-  левРукаГр.addColorStop(0, '#2f5226');
-  левРукаГр.addColorStop(0.5, '#4a7a3a');
-  левРукаГр.addColorStop(1, '#1f3a18');
-  cx.fillStyle = левРукаГр;
-
-  /* Горизонтальная часть */
-  cx.beginPath();
-  cx.moveTo(ц - 7, s * 0.52);
-  cx.lineTo(ц - 14, s * 0.52);
-  cx.lineTo(ц - 14, s * 0.44);
-  cx.lineTo(ц - 7, s * 0.44);
-  cx.closePath();
-  cx.fill();
-  cx.stroke();
-
-  /* Вверх */
-  cx.beginPath();
-  cx.moveTo(ц - 15, s * 0.44);
-  cx.lineTo(ц - 11, s * 0.44);
-  cx.lineTo(ц - 11, s * 0.30);
-  cx.lineTo(ц - 15, s * 0.30);
-  cx.closePath();
-  cx.fill();
-  cx.stroke();
-
-  /* Правая рука */
-  const прРукаГр = cx.createLinearGradient(ц + 6, 0, ц + 16, 0);
-  прРукаГр.addColorStop(0, '#1f3a18');
-  прРукаГр.addColorStop(0.5, '#4a7a3a');
-  прРукаГр.addColorStop(1, '#2f5226');
-  cx.fillStyle = прРукаГр;
-
-  cx.beginPath();
-  cx.moveTo(ц + 7, s * 0.48);
-  cx.lineTo(ц + 14, s * 0.48);
-  cx.lineTo(ц + 14, s * 0.40);
-  cx.lineTo(ц + 7, s * 0.40);
-  cx.closePath();
-  cx.fill();
-  cx.stroke();
-
-  cx.beginPath();
-  cx.moveTo(ц + 11, s * 0.40);
-  cx.lineTo(ц + 15, s * 0.40);
-  cx.lineTo(ц + 15, s * 0.24);
-  cx.lineTo(ц + 11, s * 0.24);
-  cx.closePath();
-  cx.fill();
-  cx.stroke();
-
-  /* Иголки */
-  cx.strokeStyle = 'rgba(210,230,160,0.85)';
-  cx.lineWidth = 0.6;
-  for (let i = 0; i < 60; i++) {
-    const x = ц + (Math.random() - 0.5) * 14;
-    const y = s * 0.32 + Math.random() * s * 0.62;
-    const уг = Math.random() * ДВА_ПИ;
-    cx.beginPath();
-    cx.moveTo(x, y);
-    cx.lineTo(x + Math.cos(уг) * 2, y + Math.sin(уг) * 2);
-    cx.stroke();
-  }
-
-  /* Цветки на верхушке */
-  cx.fillStyle = '#e05050';
-  cx.beginPath();
-  cx.arc(ц, s * 0.29, 2.5, 0, ДВА_ПИ);
-  cx.fill();
-  cx.fillStyle = '#ff8080';
-  cx.beginPath();
-  cx.arc(ц - 0.5, s * 0.29 - 0.5, 1.5, 0, ДВА_ПИ);
-  cx.fill();
-}
-
-/* ---------- Спрайт бочки ---------- */
-function спрайтБочка(cx, s) {
-  cx.clearRect(0, 0, s, s);
-  const ц = s / 2;
-
-  /* Тень */
-  const теньГр = cx.createRadialGradient(ц, s * 0.96, 2, ц, s * 0.96, s * 0.15);
-  теньГр.addColorStop(0, 'rgba(0,0,0,0.5)');
-  теньГр.addColorStop(1, 'rgba(0,0,0,0)');
-  cx.fillStyle = теньГр;
-  cx.beginPath();
-  cx.ellipse(ц, s * 0.96, s * 0.14, s * 0.03, 0, 0, ДВА_ПИ);
-  cx.fill();
-
-  const верх = s * 0.28;
-  const низ  = s * 0.94;
-
-  /* Тело бочки */
-  const бочГр = cx.createLinearGradient(ц - 15, 0, ц + 15, 0);
-  бочГр.addColorStop(0, '#3a2010');
-  бочГр.addColorStop(0.15, '#7a4a25');
-  бочГр.addColorStop(0.4, '#a06838');
-  бочГр.addColorStop(0.6, '#8a5a30');
-  бочГр.addColorStop(0.85, '#5a3520');
-  бочГр.addColorStop(1, '#2a1808');
-  cx.fillStyle = бочГр;
-  cx.beginPath();
-  cx.moveTo(ц - 13, верх);
-  cx.lineTo(ц + 13, верх);
-  cx.lineTo(ц + 15, низ);
-  cx.lineTo(ц - 15, низ);
-  cx.closePath();
-  cx.fill();
-
-  /* Тёмная обводка */
-  cx.strokeStyle = '#1a0a05';
-  cx.lineWidth = 1.2;
-  cx.stroke();
-
-  /* Доски бочки */
-  cx.strokeStyle = 'rgba(20,10,5,0.55)';
-  cx.lineWidth = 0.7;
-  for (let i = 1; i < 4; i++) {
-    const t = i / 4;
-    const x1 = ц - 13 + (ц + 13 - (ц - 13)) * t;
-    const x2 = ц - 15 + (ц + 15 - (ц - 15)) * t;
-    cx.beginPath();
-    cx.moveTo(x1, верх);
-    cx.lineTo(x2, низ);
-    cx.stroke();
-  }
-
-  /* Обручи */
-  function обруч(y, ширина) {
-    cx.strokeStyle = '#1a0a05';
-    cx.lineWidth = 3;
-    cx.beginPath();
-    cx.moveTo(ц - ширина, y);
-    cx.lineTo(ц + ширина, y);
-    cx.stroke();
-    /* Блик на обруче */
-    cx.strokeStyle = 'rgba(200,180,150,0.4)';
-    cx.lineWidth = 1;
-    cx.beginPath();
-    cx.moveTo(ц - ширина + 1, y - 1);
-    cx.lineTo(ц + ширина - 1, y - 1);
-    cx.stroke();
-  }
-
-  обруч(s * 0.34, 13.5);
-  обруч(s * 0.62, 14.5);
-  обруч(s * 0.90, 15);
-
-  /* Крышка (эллипс сверху) */
-  const крышкаГр = cx.createRadialGradient(ц - 4, верх - 2, 1, ц, верх, 13);
-  крышкаГр.addColorStop(0, '#b07840');
-  крышкаГр.addColorStop(1, '#5a3520');
-  cx.fillStyle = крышкаГр;
-  cx.beginPath();
-  cx.ellipse(ц, верх, 13, 4, 0, 0, ДВА_ПИ);
-  cx.fill();
-  cx.strokeStyle = '#2a1808';
-  cx.lineWidth = 1.2;
-  cx.stroke();
-
-  /* Доски на крышке */
-  cx.strokeStyle = 'rgba(20,10,5,0.4)';
-  cx.lineWidth = 0.6;
-  for (let i = -10; i <= 10; i += 5) {
-    cx.beginPath();
-    cx.moveTo(ц + i, верх - 3);
-    cx.lineTo(ц + i, верх + 3);
-    cx.stroke();
-  }
-
-  /* Пробка / отверстие */
-  cx.fillStyle = '#1a0a05';
-  cx.beginPath();
-  cx.ellipse(ц, верх, 1.5, 0.8, 0, 0, ДВА_ПИ);
-  cx.fill();
-}
-
-/* ---------- Строим текстуры ---------- */
-const ТЕКСТУРЫ = [];
-ТЕКСТУРЫ[1] = извлечьТекстуру(текстураДерево);
-ТЕКСТУРЫ[2] = извлечьТекстуру(текстураКирпич);
-ТЕКСТУРЫ[3] = извлечьТекстуру(текстураКамень);
-ТЕКСТУРЫ[4] = извлечьТекстуру(текстураДверь);
-ТЕКСТУРЫ[5] = извлечьТекстуру(текстураМеталл);
-
-const ТЕКСТУРА_ПОЛА = извлечьТекстуру(текстураПесок);
-
-const СПРАЙТ_КОВБОЙ = извлечьТекстуру(спрайтКовбой);
-const СПРАЙТ_КАКТУС  = извлечьТекстуру(спрайтКактус);
-const СПРАЙТ_БОЧКА   = извлечьТекстуру(спрайтБочка);
-
-/* ==========================================================
-   6. КАРТА МИРА
-   ========================================================== */
-function построитьКарту() {
-  КАРТА.fill(0);
-
-  /* Периметр — высокий забор */
-  for (let x = 0; x < РАЗМЕР_КАРТЫ; x++) {
-    КАРТА[x] = 1;
-    КАРТА[(РАЗМЕР_КАРТЫ - 1) * РАЗМЕР_КАРТЫ + x] = 1;
-  }
-  for (let y = 0; y < РАЗМЕР_КАРТЫ; y++) {
-    КАРТА[y * РАЗМЕР_КАРТЫ] = 1;
-    КАРТА[y * РАЗМЕР_КАРТЫ + РАЗМЕР_КАРТЫ - 1] = 1;
-  }
-
-  function стена(x, y, w, h, тип) {
-    for (let j = y; j < y + h; j++) {
-      for (let i = x; i < x + w; i++) {
-        if (i > 0 && i < РАЗМЕР_КАРТЫ - 1 && j > 0 && j < РАЗМЕР_КАРТЫ - 1) {
-          КАРТА[j * РАЗМЕР_КАРТЫ + i] = тип;
-        }
-      }
-    }
-  }
-
-  function очистить(x, y, w, h) {
-    for (let j = y; j < y + h; j++) {
-      for (let i = x; i < x + w; i++) {
-        if (i > 0 && i < РАЗМЕР_КАРТЫ - 1 && j > 0 && j < РАЗМЕР_КАРТЫ - 1) {
-          КАРТА[j * РАЗМЕР_КАРТЫ + i] = 0;
-        }
-      }
-    }
-  }
-
-  /* --- Дома --- */
-
-  /* Дом 1: деревянный, левый верх */
-  стена(3, 3, 6, 5, 1);
-  очистить(4, 4, 4, 3);
-  КАРТА[5 * РАЗМЕР_КАРТЫ + 8] = 4;
-
-  /* Дом 2: кирпичный, правый верх */
-  стена(22, 3, 6, 5, 2);
-  очистить(23, 4, 4, 3);
-  КАРТА[5 * РАЗМЕР_КАРТЫ + 22] = 4;
-
-  /* Дом 3: каменный, левый низ */
-  стена(3, 22, 6, 6, 3);
-  очистить(4, 23, 4, 4);
-  КАРТА[22 * РАЗМЕР_КАРТЫ + 5] = 4;
-
-  /* Дом 4: кирпичный, правый низ */
-  стена(22, 22, 6, 6, 2);
-  очистить(23, 23, 4, 4);
-  КАРТА[22 * РАЗМЕР_КАРТЫ + 25] = 4;
-
-  /* Дом 5: центральный салун — большой деревянный */
-  стена(12, 12, 8, 8, 1);
-  очистить(13, 13, 6, 6);
-  КАРТА[19 * РАЗМЕР_КАРТЫ + 15] = 4;
-  КАРТА[19 * РАЗМЕР_КАРТЫ + 16] = 4;
-
-  /* Одинокие стены для укрытия */
-  стена(18, 5, 1, 3, 1);
-  стена(11, 24, 4, 1, 3);
-  стена(26, 12, 1, 5, 2);
-
-  /* Разбросанные блоки */
-  стена(8, 15, 1, 1, 5);
-  стена(23, 15, 1, 1, 5);
-  стена(15, 8, 1, 1, 1);
-  стена(16, 24, 1, 1, 1);
-
-  /* Колодцы / столбы */
-  стена(10, 10, 1, 1, 3);
-  стена(21, 21, 1, 1, 3);
-  стена(10, 21, 1, 1, 3);
-  стена(21, 10, 1, 1, 3);
-
-  /* Пара металлических укрытий */
-  стена(6, 12, 1, 3, 5);
-  стена(27, 20, 1, 3, 5);
-}
-
-построитьКарту();
-
-function этоСтена(x, y) {
-  if (x < 0 || y < 0 || x >= РАЗМЕР_КАРТЫ || y >= РАЗМЕР_КАРТЫ) return true;
-  return КАРТА[Math.floor(y) * РАЗМЕР_КАРТЫ + Math.floor(x)] > 0;
-}
-
-/* ==========================================================
-   7. ИГРОК И СОСТОЯНИЕ
-   ========================================================== */
-const игрок = {
-  x: 16, y: 24,
-  угол: -Math.PI / 2,
-  pitch: 0,
-  хп: 100, максХп: 100,
-  патроны: 6, максПатронов: 6, запас: 42,
-  откатВыстрела: 0,
-  перезарядка: 0,
-  меткийГлаз: 1,
-  мгАктивен: false,
-  тряска: 0,
-  вспышкаСтвола: 0,
-  фазаШага: 0,
-  покачиваниеСтвола: 0,
-  дым: 0
+// ============================================================
+// 11. ИГРОК
+// ============================================================
+const player = {
+  x: 0, z: 15,
+  yaw: Math.PI,
+  hp: 100, maxHp: 100,
+  ammo: 6, maxAmmo: 6, reserve: 42,
+  reload: 0, fireCd: 0,
+  mounted: true,
+  walkPhase: 0
 };
 
-let состояние = 'меню';
-let время = 0;
-let счёт = 0;
-let убийств = 0;
-let таймерСпавна = 0;
-let таймерПодсказки = 3;
-let вспышкаУрона = 0;
+const playerMesh = createCowboy(0x4a3a6b);
+scene.add(playerMesh);
 
-let спрайты = [];
-let эффекты = [];
+const horseMesh = createHorse();
+scene.add(horseMesh);
 
-/* ==========================================================
-   8. ВВОД
-   ========================================================== */
-const клавиши = Object.create(null);
-const мышь = { dx: 0, dy: 0, нажата: false };
-let указательЗахвачен = false;
+// ============================================================
+// 12. КАМЕРА
+// ============================================================
+const cam = {
+  yaw: 0,
+  pitch: 0.15,
+  distance: 7.5,
+  height: 3.6
+};
 
+// ============================================================
+// 13. ВРАГИ
+// ============================================================
+const enemies = [];
+
+function spawnEnemy(x, z) {
+  const mesh = createCowboy(0x6a3020);
+  mesh.position.set(x, 0, z);
+  scene.add(mesh);
+
+  enemies.push({
+    mesh, x, z,
+    hp: 100, maxHp: 100,
+    speed: 1.1 + Math.random() * 0.7,
+    fireCd: 1 + Math.random() * 2.5,
+    yaw: 0,
+    walkPhase: 0
+  });
+}
+
+// ============================================================
+// 14. ЭФФЕКТЫ (частицы)
+// ============================================================
+const effects = [];
+
+function spawnParticles(x, y, z, color, count, spread) {
+  const sp = spread || 3;
+  for (let i = 0; i < count; i++) {
+    const geo = new THREE.SphereGeometry(0.07, 4, 3);
+    const mat = new THREE.MeshBasicMaterial({ color });
+    const p = new THREE.Mesh(geo, mat);
+    p.position.set(x, y, z);
+    scene.add(p);
+
+    effects.push({
+      mesh: p,
+      vx: (Math.random() - 0.5) * sp,
+      vy: Math.random() * sp * 0.7 + 1,
+      vz: (Math.random() - 0.5) * sp,
+      life: 0.6 + Math.random() * 0.5,
+      maxLife: 1.1
+    });
+  }
+}
+
+// ============================================================
+// 15. ВВОД — КЛАВИАТУРА/МЫШЬ
+// ============================================================
+const keys = {};
 window.addEventListener('keydown', e => {
-  клавиши[e.code] = true;
+  keys[e.code] = true;
+  if (e.code === 'KeyE') toggleHorse();
+  if (e.code === 'KeyR') startReload();
+  if (e.code === 'KeyQ') toggleDeadEye();
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
-
-  if (e.code === 'KeyQ') переключитьМеткийГлаз();
-  if (e.code === 'KeyR') {
-    if (состояние === 'конец') начатьИгру();
-    else начатьПерезарядку();
-  }
-  if (e.code === 'Space' && состояние === 'меню') начатьИгру();
 });
+window.addEventListener('keyup', e => { keys[e.code] = false; });
 
-window.addEventListener('keyup', e => { клавиши[e.code] = false; });
+let mouseDown = false;
+let pointerLocked = false;
 
-холст.addEventListener('click', () => {
-  if (состояние === 'меню' || состояние === 'конец') {
-    начатьИгру();
-    return;
-  }
-  if (!ЭТО_ТАЧ && !указательЗахвачен) {
-    холст.requestPointerLock();
-  }
-});
-
-document.addEventListener('pointerlockchange', () => {
-  указательЗахвачен = document.pointerLockElement === холст;
-});
-
-document.addEventListener('mousemove', e => {
-  if (указательЗахвачен) {
-    мышь.dx += e.movementX;
-    мышь.dy += e.movementY;
-  }
-});
-
-холст.addEventListener('mousedown', e => {
+canvas.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
-  if (состояние === 'игра') мышь.нажата = true;
+  if (state === 'play') mouseDown = true;
+  if (!ЭТО_ТАЧ && !pointerLocked && state === 'play') canvas.requestPointerLock();
 });
 
 window.addEventListener('mouseup', e => {
-  if (e.button === 0) мышь.нажата = false;
+  if (e.button === 0) mouseDown = false;
 });
 
-холст.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('pointerlockchange', () => {
+  pointerLocked = document.pointerLockElement === canvas;
+});
 
-/* ---------- Тач ---------- */
-const левыйСтик = { активен: false, id: null, ox: 0, oy: 0, x: 0, y: 0, dx: 0, dy: 0 };
-const правыйСтик = { активен: false, id: null, ox: 0, oy: 0, x: 0, y: 0, dx: 0, dy: 0, тапТаймер: 0, стрелял: false };
-
-const РАДИУС_СТИКА = 70;
-const МЁРТВАЯ_ЗОНА = 0.14;
-
-const кнопки = [
-  { ключ: 'перезарядка', метка: 'ПЕР',  x: () => Ш_ЭКРАНА - 60, y: () => 270, r: 34, цвет: '#c9a03a' },
-  { ключ: 'меткийГлаз',  метка: 'ГЛАЗ', x: () => Ш_ЭКРАНА - 60, y: () => 360, r: 34, цвет: '#d8a83a' },
-  { ключ: 'бег',         метка: 'БЕГ',  x: () => 60,           y: () => В_ЭКРАНА - 60, r: 34, цвет: '#8a5a30' }
-];
-
-let бег = false;
-
-function попаданиеВКнопку(x, y) {
-  for (const к of кнопки) {
-    if (раст(x, y, к.x(), к.y()) < к.r + 18) return к;
+document.addEventListener('mousemove', e => {
+  if (pointerLocked) {
+    cam.yaw -= e.movementX * 0.0025;
+    cam.pitch = Math.max(-0.25, Math.min(0.85, cam.pitch + e.movementY * 0.002));
   }
+});
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ============================================================
+// 16. ВВОД — ТАЧ
+// ============================================================
+const stickLeft = { active: false, id: null, ox: 0, oy: 0, x: 0, y: 0, dx: 0, dy: 0 };
+const stickRight = { active: false, id: null, ox: 0, oy: 0, x: 0, y: 0, dx: 0, dy: 0 };
+
+const STICK_RADIUS = 68;
+const DEADZONE = 0.14;
+
+// Кнопки — проверяем координаты нажатий
+function hitButton(x, y) {
+  const w = window.innerWidth, h = window.innerHeight;
+  // ОГОНЬ
+  if (Math.hypot(x - (w - 85), y - (h - 145)) < 70) return 'fire';
+  // ПЕР
+  if (Math.hypot(x - (w - 210), y - (h - 55)) < 50) return 'reload';
+  // КОНЬ
+  if (Math.hypot(x - (w - 55), y - (h - 55)) < 50) return 'horse';
   return null;
 }
 
-function обработатьКосStart(e) {
-  for (let i = 0; i < e.changedTouches.length; i++) {
-    const t = e.changedTouches[i];
+let fireHeld = false;
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
     const x = t.clientX, y = t.clientY;
 
-    const к = попаданиеВКнопку(x, y);
-    if (к) { к.tid = t.identifier; нажатьКнопку(к); continue; }
-
-    if (x < Ш_ЭКРАНА * 0.5 && !левыйСтик.активен) {
-      левыйСтик.активен = true;
-      левыйСтик.id = t.identifier;
-      левыйСтик.ox = x; левыйСтик.oy = y;
-      левыйСтик.x  = x; левыйСтик.y  = y;
-      левыйСтик.dx = 0; левыйСтик.dy = 0;
+    const btn = hitButton(x, y);
+    if (btn) {
+      if (btn === 'fire') {
+        fireHeld = true;
+        if (state === 'play') fire();
+      } else if (btn === 'reload') startReload();
+      else if (btn === 'horse') toggleHorse();
       continue;
     }
 
-    if (x >= Ш_ЭКРАНА * 0.5 && !правыйСтик.активен) {
-      правыйСтик.активен = true;
-      правыйСтик.id = t.identifier;
-      правыйСтик.ox = x; правыйСтик.oy = y;
-      правыйСтик.x  = x; правыйСтик.y  = y;
-      правыйСтик.dx = 0; правыйСтик.dy = 0;
-      правыйСтик.тапТаймер = performance.now();
-      правыйСтик.стрелял = false;
-      continue;
+    if (x < window.innerWidth * 0.5 && !stickLeft.active) {
+      stickLeft.active = true;
+      stickLeft.id = t.identifier;
+      stickLeft.ox = x; stickLeft.oy = y;
+      stickLeft.x = x; stickLeft.y = y;
+      stickLeft.dx = 0; stickLeft.dy = 0;
+    } else if (x >= window.innerWidth * 0.5 && !stickRight.active) {
+      stickRight.active = true;
+      stickRight.id = t.identifier;
+      stickRight.ox = x; stickRight.oy = y;
+      stickRight.x = x; stickRight.y = y;
+      stickRight.dx = 0; stickRight.dy = 0;
     }
   }
-}
+}, { passive: false });
 
-function обработатьКосMove(e) {
-  for (let i = 0; i < e.changedTouches.length; i++) {
-    const t = e.changedTouches[i];
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (stickLeft.active && t.identifier === stickLeft.id) {
+      stickLeft.x = t.clientX; stickLeft.y = t.clientY;
+      let dx = stickLeft.x - stickLeft.ox;
+      let dy = stickLeft.y - stickLeft.oy;
+      const len = Math.hypot(dx, dy);
+      if (len > STICK_RADIUS) {
+        dx = dx / len * STICK_RADIUS;
+        dy = dy / len * STICK_RADIUS;
+        stickLeft.ox = stickLeft.x - dx;
+        stickLeft.oy = stickLeft.y - dy;
+      }
+      stickLeft.dx = dx / STICK_RADIUS;
+      stickLeft.dy = dy / STICK_RADIUS;
+      if (Math.hypot(stickLeft.dx, stickLeft.dy) < DEADZONE) {
+        stickLeft.dx = 0; stickLeft.dy = 0;
+      }
+    }
+    if (stickRight.active && t.identifier === stickRight.id) {
+      const dx = t.clientX - stickRight.x;
+      const dy = t.clientY - stickRight.y;
+      cam.yaw -= dx * 0.006;
+      cam.pitch = Math.max(-0.25, Math.min(0.85, cam.pitch + dy * 0.005));
+      stickRight.x = t.clientX; stickRight.y = t.clientY;
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (stickLeft.active && t.identifier === stickLeft.id) {
+      stickLeft.active = false;
+      stickLeft.id = null;
+      stickLeft.dx = 0; stickLeft.dy = 0;
+    }
+    if (stickRight.active && t.identifier === stickRight.id) {
+      stickRight.active = false;
+      stickRight.id = null;
+    }
+    // Если отпустили ОГОНЬ
     const x = t.clientX, y = t.clientY;
-
-    if (левыйСтик.активен && t.identifier === левыйСтик.id) {
-      левыйСтик.x = x; левыйСтик.y = y;
-      let dx = x - левыйСтик.ox;
-      let dy = y - левыйСтик.oy;
-      const дл = Math.hypot(dx, dy);
-      if (дл > РАДИУС_СТИКА) {
-        dx = dx / дл * РАДИУС_СТИКА;
-        dy = dy / дл * РАДИУС_СТИКА;
-        левыйСтик.ox = x - dx;
-        левыйСтик.oy = y - dy;
-      }
-      левыйСтик.dx = dx / РАДИУС_СТИКА;
-      левыйСтик.dy = dy / РАДИУС_СТИКА;
-      if (Math.hypot(левыйСтик.dx, левыйСтик.dy) < МЁРТВАЯ_ЗОНА) {
-        левыйСтик.dx = 0; левыйСтик.dy = 0;
-      }
-    }
-
-    if (правыйСтик.активен && t.identifier === правыйСтик.id) {
-      const dx = x - правыйСтик.x;
-      const dy = y - правыйСтик.y;
-      игрок.угол += dx * 0.005;
-      игрок.pitch = огр(игрок.pitch - dy * 0.6, -ВЫСОТА_БУФ * 0.35, ВЫСОТА_БУФ * 0.35);
-      правыйСтик.x = x; правыйСтик.y = y;
-      if (Math.hypot(dx, dy) > 4) правыйСтик.стрелял = true;
-    }
+    const btn = hitButton(x, y);
+    if (btn === 'fire') fireHeld = false;
   }
-}
-
-function обработатьКосEnd(e) {
-  for (let i = 0; i < e.changedTouches.length; i++) {
-    const t = e.changedTouches[i];
-
-    for (const к of кнопки) {
-      if (к.tid === t.identifier) {
-        к.tid = null;
-        if (к.ключ === 'бег') бег = false;
-      }
-    }
-
-    if (левыйСтик.активен && t.identifier === левыйСтик.id) {
-      левыйСтик.активен = false;
-      левыйСтик.id = null;
-      левыйСтик.dx = 0; левыйСтик.dy = 0;
-    }
-
-    if (правыйСтик.активен && t.identifier === правыйСтик.id) {
-      const dt = performance.now() - правыйСтик.тапТаймер;
-      if (dt < 250 && !правыйСтик.стрелял) {
-        if (состояние === 'игра') выстрел();
-      }
-      правыйСтик.активен = false;
-      правыйСтик.id = null;
-    }
-  }
-}
-
-function нажатьКнопку(к) {
-  if (к.ключ === 'перезарядка') начатьПерезарядку();
-  if (к.ключ === 'меткийГлаз')  переключитьМеткийГлаз();
-  if (к.ключ === 'бег')         бег = true;
-}
-
-холст.addEventListener('touchstart', e => {
-  e.preventDefault();
-  if (состояние === 'меню' || состояние === 'конец') { начатьИгру(); return; }
-  обработатьКосStart(e);
+  // Если ни одного касания не осталось на кнопке огня — сбрасываем
+  if (e.touches.length === 0) fireHeld = false;
 }, { passive: false });
 
-холст.addEventListener('touchmove', e => {
+canvas.addEventListener('touchcancel', e => {
   e.preventDefault();
-  обработатьКосMove(e);
+  stickLeft.active = false; stickLeft.id = null;
+  stickRight.active = false; stickRight.id = null;
+  fireHeld = false;
 }, { passive: false });
 
-холст.addEventListener('touchend', e => {
-  e.preventDefault();
-  обработатьКосEnd(e);
-}, { passive: false });
+// ============================================================
+// 17. ЛОГИКА ИГРЫ
+// ============================================================
+let state = 'menu';
+let score = 0;
+let kills = 0;
+let gameTime = 0;
+let spawnTimer = 0;
+let deadEye = 1;
+let deadEyeActive = false;
 
-холст.addEventListener('touchcancel', e => {
-  e.preventDefault();
-  обработатьКосEnd(e);
-}, { passive: false });
+function fire() {
+  if (state !== 'play') return;
+  if (player.reload > 0) return;
+  if (player.fireCd > 0) return;
+  if (player.ammo <= 0) { startReload(); return; }
 
-/* ==========================================================
-   9. ЛОГИКА ИГРЫ
-   ========================================================== */
-function начатьИгру() {
-  состояние = 'игра';
-  время = 0;
-  счёт = 0;
-  убийств = 0;
-  таймерСпавна = 1.0;
-  таймерПодсказки = 4;
-  вспышкаУрона = 0;
+  player.ammo--;
+  player.fireCd = deadEyeActive ? 0.15 : 0.30;
 
-  игрок.x = 16; игрок.y = 24;
-  игрок.угол = -Math.PI / 2;
-  игрок.pitch = 0;
-  игрок.хп = 100;
-  игрок.патроны = 6;
-  игрок.запас = 42;
-  игрок.откатВыстрела = 0;
-  игрок.перезарядка = 0;
-  игрок.меткийГлаз = 1;
-  игрок.мгАктивен = false;
-  игрок.тряска = 0;
-  игрок.вспышкаСтвола = 0;
-  игрок.дым = 0;
+  // Направление взгляда игрока
+  const dirX = Math.sin(player.yaw);
+  const dirZ = Math.cos(player.yaw);
 
-  спрайты = [];
-  эффекты = [];
+  let best = null, bestDist = 35;
+  for (const e of enemies) {
+    const dx = e.x - player.x;
+    const dz = e.z - player.z;
+    const d = Math.hypot(dx, dz);
+    if (d > bestDist) continue;
+    const dot = (dx * dirX + dz * dirZ) / d;
+    if (dot < 0.72) continue;
+    bestDist = d;
+    best = e;
+  }
 
-  for (let i = 0; i < 5; i++) создатьВрага();
-  разместитьДекор();
-}
-
-function разместитьДекор() {
-  let попыток = 0;
-  let кактусов = 0, бочек = 0;
-
-  while ((кактусов < 25 || бочек < 12) && попыток < 800) {
-    попыток++;
-    const x = случ(1.5, РАЗМЕР_КАРТЫ - 1.5);
-    const y = случ(1.5, РАЗМЕР_КАРТЫ - 1.5);
-
-    if (этоСтена(x, y)) continue;
-    if (раст(x, y, игрок.x, игрок.y) < 3) continue;
-
-    let занято = false;
-    for (const с of спрайты) {
-      if (раст(s.x, s.y, x, y) < 1.2) { занято = true; break; }
+  if (best) {
+    best.hp -= deadEyeActive ? 130 : 55;
+    spawnParticles(best.x, 1.2, best.z, 0xcc1a1a, 6, 2);
+    if (best.hp <= 0) {
+      kills++;
+      score += 100;
+      spawnParticles(best.x, 1.0, best.z, 0x8a1818, 22, 4);
+      scene.remove(best.mesh);
+      const idx = enemies.indexOf(best);
+      if (idx >= 0) enemies.splice(idx, 1);
     }
-    if (занято) continue;
-
-    if (кактусов < 25 && (бочек >= 12 || Math.random() < 0.65)) {
-      спрайты.push({
-        x, y, тип: 'кактус', текстура: СПРАЙТ_КАКТУС,
-        ширина: 0.9, высота: 0.9, смещение: 0.0
-      });
-      кактусов++;
-    } else {
-      спрайты.push({
-        x, y, тип: 'бочка', текстура: СПРАЙТ_БОЧКА,
-        ширина: 0.65, высота: 0.65, смещение: 0.0
-      });
-      бочек++;
-    }
-  }
-}
-
-function создатьВрага() {
-  for (let попыток = 0; попыток < 100; попыток++) {
-    const x = случ(2, РАЗМЕР_КАРТЫ - 2);
-    const y = случ(2, РАЗМЕР_КАРТЫ - 2);
-
-    if (этоСтена(x, y)) continue;
-    const d = раст(x, y, игрок.x, игрок.y);
-    if (d < 6 || d > 20) continue;
-
-    let занято = false;
-    for (const с of спрайты) {
-      if (с.тип === 'враг' && раст(s.x, s.y, x, y) < 1.5) { занято = true; break; }
-    }
-    if (занято) continue;
-
-    спрайты.push({
-      x, y, тип: 'враг', текстура: СПРАЙТ_КОВБОЙ,
-      ширина: 0.75, высота: 1.1, смещение: 0.0,
-      хп: 100, максХп: 100,
-      угол: 0,
-      откатВыстрела: случ(0.8, 2.0),
-      скорость: случ(0.7, 1.2),
-      вспышка: 0,
-      уронВспышка: 0,
-      фаза: Math.random() * 10
-    });
-    return;
-  }
-}
-
-function переключитьМеткийГлаз() {
-  if (состояние !== 'игра') return;
-  if (игрок.мгАктивен) { игрок.мгАктивен = false; return; }
-  if (игрок.меткийГлаз > 0.15) игрок.мгАктивен = true;
-}
-
-function начатьПерезарядку() {
-  if (состояние !== 'игра') return;
-  if (игрок.перезарядка > 0) return;
-  if (игрок.патроны >= игрок.максПатронов) return;
-  if (игрок.запас <= 0) return;
-  игрок.перезарядка = 1.6;
-}
-
-function выстрел() {
-  if (игрок.перезарядка > 0) return;
-  if (игрок.патроны <= 0) { начатьПерезарядку(); return; }
-
-  игрок.патроны--;
-  игрок.откатВыстрела = 0.30;
-  игрок.вспышкаСтвола = 0.10;
-  игрок.тряска = Math.min(игрок.тряска + 6, 14);
-  игрок.дым = 0.4;
-
-  const dirX = Math.cos(игрок.угол);
-  const dirY = Math.sin(игрок.угол);
-
-  let ближайший = null, ближайшееРасст = 40;
-
-  for (const с of спрайты) {
-    if (с.тип !== 'враг') continue;
-    const dx = с.x - игрок.x;
-    const dy = с.y - игрок.y;
-    const расст = Math.hypot(dx, dy);
-    if (расст > 30) continue;
-
-    const скал = (dx * dirX + dy * dirY) / расст;
-    const порог = 1 - Math.min(0.30, 0.06 + расст * 0.006);
-    if (скал < порог) continue;
-    if (!лучСвободен(игрок.x, игрок.y, с.x, с.y)) continue;
-
-    if (расст < ближайшееРасст) {
-      ближайшееРасст = расст;
-      ближайший = с;
-    }
-  }
-
-  if (ближайший) {
-    const урон = игрок.мгАктивен ? 120 : 45;
-    ближайший.хп -= урон;
-    ближайший.вспышка = 0.20;
-
-    for (let i = 0; i < 10; i++) {
-      эффекты.push({
-        x: ближайший.x, y: ближайший.y,
-        vx: случ(-2, 2), vy: случ(-2, 2),
-        жизнь: случ(0.3, 0.7), макс: 0.7,
-        цвет: '#a3151a', размер: случ(2, 6)
-      });
-    }
-
-    if (ближайший.хп <= 0) убитьВрага(ближайший);
-  }
-}
-
-function лучСвободен(x0, y0, x1, y1) {
-  const dx = x1 - x0, dy = y1 - y0;
-  const расст = Math.hypot(dx, dy);
-  const шагов = Math.ceil(расст * 8);
-
-  for (let i = 1; i < шагов; i++) {
-    const t = i / шагов;
-    const x = x0 + dx * t;
-    const y = y0 + dy * t;
-    if (этоСтена(x, y)) return false;
-  }
-  return true;
-}
-
-function убитьВрага(враг) {
-  const idx = спрайты.indexOf(враг);
-  if (idx >= 0) спрайты.splice(idx, 1);
-
-  счёт += 100;
-  убийств++;
-
-  for (let i = 0; i < 25; i++) {
-    эффекты.push({
-      x: враг.x, y: враг.y,
-      vx: случ(-3, 3), vy: случ(-3, 3),
-      жизнь: случ(0.4, 1.0), макс: 1.0,
-      цвет: i % 3 ? '#a3151a' : '#6d0f12',
-      размер: случ(2, 6)
-    });
-  }
-}
-
-/* ==========================================================
-   10. ОБНОВЛЕНИЕ
-   ========================================================== */
-function обновить(dt) {
-  if (состояние !== 'игра') return;
-
-  время += dt;
-  if (таймерПодсказки > 0) таймерПодсказки -= dt;
-  if (вспышкаУрона > 0) вспышкаУрона -= dt;
-
-  /* --- ОБЗОР МЫШЬЮ --- */
-  if (указательЗахвачен) {
-    if (мышь.dx !== 0 || мышь.dy !== 0) {
-      игрок.угол += мышь.dx * 0.0022;
-      игрок.pitch = огр(игрок.pitch - мышь.dy * 0.8, -ВЫСОТА_БУФ * 0.35, ВЫСОТА_БУФ * 0.35);
-      мышь.dx = 0;
-      мышь.dy = 0;
-    }
-  }
-
-  /* --- ДВИЖЕНИЕ --- */
-  let движВперёд = 0;
-  let движВбок = 0;
-
-  if (клавиши.KeyW || клавиши.ArrowUp)    движВперёд += 1;
-  if (клавиши.KeyS || клавиши.ArrowDown)  движВперёд -= 1;
-  if (клавиши.KeyA) движВбок -= 1;
-  if (клавиши.KeyD) движВбок += 1;
-  if (клавиши.ArrowLeft)  игрок.угол -= dt * 2.2;
-  if (клавиши.ArrowRight) игрок.угол += dt * 2.2;
-
-  if (левыйСтик.активен) {
-    движВперёд += -левыйСтик.dy;
-    движВбок    +=  левыйСтик.dx;
-  }
-
-  let скорость = 3.4;
-  if ((клавиши.ShiftLeft || клавиши.ShiftRight || бег) && !игрок.мгАктивен) скорость *= 1.7;
-  if (игрок.мгАктивен) скорость *= 0.45;
-
-  const dirX = Math.cos(игрок.угол);
-  const dirY = Math.sin(игрок.угол);
-
-  const длина = Math.hypot(движВперёд, движВбок) || 1;
-  const нВпер = движВперёд / длина;
-  const нВбок  = движВбок / длина;
-
-  const новаяX = игрок.x + (dirX * нВпер - dirY * нВбок) * скорость * dt;
-  const новаяY = игрок.y + (dirY * нВпер + dirX * нВбок) * скорость * dt;
-
-  if (!этоСтена(новаяX, игрок.y)) игрок.x = новаяX;
-  if (!этоСтена(игрок.x, новаяY)) игрок.y = новаяY;
-
-  /* Покачивание головы при ходьбе */
-  if (движВперёд !== 0 || движВбок !== 0) {
-    игрок.фазаШага += dt * 8 * (скорость / 3.4);
   } else {
-    игрок.фазаШага *= Math.pow(0.02, dt);
+    // Промах — небольшая пыль впереди
+    spawnParticles(
+      player.x + dirX * 5,
+      0.2,
+      player.z + dirZ * 5,
+      0x8a6a44, 4, 2
+    );
+  }
+}
+
+function startReload() {
+  if (state !== 'play') return;
+  if (player.reload > 0) return;
+  if (player.ammo >= player.maxAmmo) return;
+  if (player.reserve <= 0) return;
+  player.reload = 1.5;
+}
+
+function toggleHorse() {
+  if (state !== 'play') return;
+  if (player.mounted) {
+    player.mounted = false;
+    // Спешиваемся чуть в сторону
+    const side = player.yaw + Math.PI / 2;
+    player.x += Math.cos(side) * 0.6;
+    player.z += Math.sin(side) * 0.6;
+  } else {
+    player.mounted = true;
+  }
+}
+
+function toggleDeadEye() {
+  if (state !== 'play') return;
+  if (deadEyeActive) { deadEyeActive = false; return; }
+  if (deadEye > 0.15) deadEyeActive = true;
+}
+
+// ============================================================
+// 18. ОБНОВЛЕНИЕ ИГРОКА
+// ============================================================
+function updatePlayer(dt) {
+  if (player.hp <= 0) return;
+
+  let fwdInput = 0, sideInput = 0;
+
+  if (keys.KeyW || keys.ArrowUp) fwdInput += 1;
+  if (keys.KeyS || keys.ArrowDown) fwdInput -= 1;
+  if (keys.KeyA) sideInput -= 1;
+  if (keys.KeyD) sideInput += 1;
+  if (keys.ArrowLeft) cam.yaw += dt * 2;
+  if (keys.ArrowRight) cam.yaw -= dt * 2;
+
+  if (stickLeft.active) {
+    fwdInput += -stickLeft.dy;
+    sideInput += stickLeft.dx;
   }
 
-  /* --- ОГОНЬ --- */
-  if (мышь.нажата && игрок.откатВыстрела <= 0 && игрок.перезарядка <= 0) {
-    выстрел();
+  // Направления камеры в мировых координатах
+  // cam.yaw = 0 → камера сзади (+Z), смотрит в -Z
+  // forward (направление взгляда) = (-sin(camYaw), -cos(camYaw))
+  // right = (-cos(camYaw), sin(camYaw))
+  const fX = -Math.sin(cam.yaw);
+  const fZ = -Math.cos(cam.yaw);
+  const rX = -Math.cos(cam.yaw);
+  const rZ =  Math.sin(cam.yaw);
+
+  let moveX = fX * fwdInput + rX * sideInput;
+  let moveZ = fZ * fwdInput + rZ * sideInput;
+
+  const moveLen = Math.hypot(moveX, moveZ);
+  if (moveLen > 0.01) {
+    moveX /= moveLen;
+    moveZ /= moveLen;
+
+    const speed = player.mounted ? 9 : 5;
+    const nx = player.x + moveX * speed * dt;
+    const nz = player.z + moveZ * speed * dt;
+
+    // Границы деревни
+    player.x = Math.max(-60, Math.min(60, nx));
+    player.z = Math.max(-70, Math.min(50, nz));
+
+    // Игрок поворачивается в сторону движения
+    const targetYaw = Math.atan2(moveX, moveZ);
+    let diff = targetYaw - player.yaw;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    player.yaw += diff * Math.min(1, dt * 10);
+
+    player.walkPhase += dt * (player.mounted ? 12 : 9);
+  } else {
+    player.walkPhase *= Math.pow(0.01, dt);
   }
 
-  /* --- ОТКАТЫ --- */
-  if (игрок.откатВыстрела > 0) игрок.откатВыстрела -= dt;
-  if (игрок.вспышкаСтвола > 0) игрок.вспышкаСтвола -= dt;
-  if (игрок.дым > 0) игрок.дым -= dt;
-  if (игрок.тряска > 0) игрок.тряска = Math.max(0, игрок.тряска - dt * 30);
-
-  /* --- ПЕРЕЗАРЯДКА --- */
-  if (игрок.перезарядка > 0) {
-    игрок.перезарядка -= dt;
-    if (игрок.перезарядка <= 0) {
-      игрок.перезарядка = 0;
-      const нужно = игрок.максПатронов - игрок.патроны;
-      const взять = Math.min(нужно, игрок.запас);
-      игрок.патроны += взять;
-      игрок.запас -= взять;
+  // Перезарядка
+  if (player.reload > 0) {
+    player.reload -= dt;
+    if (player.reload <= 0) {
+      player.reload = 0;
+      const need = player.maxAmmo - player.ammo;
+      const take = Math.min(need, player.reserve);
+      player.ammo += take;
+      player.reserve -= take;
     }
   }
 
-  /* --- МЕТКИЙ ГЛАЗ --- */
-  if (игрок.мгАктивен) {
-    игрок.меткийГлаз -= dt * 0.28;
-    if (игрок.меткийГлаз <= 0) {
-      игрок.меткийГлаз = 0;
-      игрок.мгАктивен = false;
-    }
-  } else if (игрок.меткийГлаз < 1) {
-    игрок.меткийГлаз = Math.min(1, игрок.меткийГлаз + dt * 0.04);
+  if (player.fireCd > 0) player.fireCd -= dt;
+
+  // Меткий глаз
+  if (deadEyeActive) {
+    deadEye -= dt * 0.3;
+    if (deadEye <= 0) { deadEye = 0; deadEyeActive = false; }
+  } else if (deadEye < 1) {
+    deadEye = Math.min(1, deadEye + dt * 0.05);
   }
 
-  /* --- ВРАГИ --- */
-  const множ = игрок.мгАктивен ? 0.4 : 1.0;
+  // Автоматический огонь (кнопка или мышь)
+  if (fireHeld || mouseDown) fire();
 
-  for (let i = спрайты.length - 1; i >= 0; i--) {
-    const с = спрайты[i];
-    if (с.тип !== 'враг') continue;
+  updatePlayerMesh();
+}
 
-    if (с.вспышка > 0) с.вспышка -= dt;
-    if (с.уронВспышка > 0) с.уронВспышка -= dt;
-    с.фаза += dt * 3;
+function updatePlayerMesh() {
+  if (player.mounted) {
+    horseMesh.visible = true;
+    horseMesh.position.set(player.x, 0, player.z);
+    horseMesh.rotation.y = player.yaw;
 
-    const dx = игрок.x - с.x;
-    const dy = игрок.y - с.y;
-    const расст = Math.hypot(dx, dy);
-    с.угол = Math.atan2(dy, dx);
+    const bob = Math.sin(player.walkPhase) * 0.2;
+    horseMesh.userData.legs.forEach((leg, i) => {
+      leg.position.y = 0.65 + (i % 2 === 0 ? bob : -bob);
+    });
 
-    if (расст > 3) {
-      const vx = (dx / расст) * с.скорость * dt * множ;
-      const vy = (dy / расст) * с.скорость * dt * множ;
-      const новаяВX = с.x + vx;
-      const новаяВY = с.y + vy;
-      if (!этоСтена(новаяВX, с.y)) с.x = новаяВX;
-      if (!этоСтена(с.x, новаяВY)) с.y = новаяВY;
+    playerMesh.visible = true;
+    playerMesh.position.set(player.x, 1.9, player.z);
+    playerMesh.rotation.y = player.yaw;
+    playerMesh.userData.legs.forEach(l => l.visible = false);
+  } else {
+    horseMesh.visible = false;
+    playerMesh.visible = true;
+    playerMesh.position.set(player.x, 0, player.z);
+    playerMesh.rotation.y = player.yaw;
+    playerMesh.userData.legs.forEach(l => l.visible = true);
+
+    const bob = Math.sin(player.walkPhase) * 0.18;
+    playerMesh.userData.legs[0].position.z = bob;
+    playerMesh.userData.legs[1].position.z = -bob;
+  }
+}
+
+// ============================================================
+// 19. ОБНОВЛЕНИЕ ВРАГОВ
+// ============================================================
+function updateEnemies(dt) {
+  const timeScale = deadEyeActive ? 0.35 : 1;
+
+  for (const e of enemies) {
+    const dx = player.x - e.x;
+    const dz = player.z - e.z;
+    const d = Math.hypot(dx, dz);
+
+    if (d > 4) {
+      const sp = e.speed * dt * timeScale;
+      e.x += (dx / d) * sp;
+      e.z += (dz / d) * sp;
+      e.walkPhase += dt * 6 * timeScale;
+    } else if (d < 2 && d > 0.01) {
+      e.x -= (dx / d) * e.speed * dt * timeScale * 0.6;
+      e.z -= (dz / d) * e.speed * dt * timeScale * 0.6;
     }
 
-    if (расст < 1.0 && расст > 0.01) {
-      с.x -= (dx / расст) * 0.5 * dt;
-      с.y -= (dy / расст) * 0.5 * dt;
-    }
+    // Поворот к игроку
+    const targetYaw = Math.atan2(dx, dz);
+    let diff = targetYaw - e.yaw;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    e.yaw += diff * Math.min(1, dt * 6 * timeScale);
 
-    с.откатВыстрела -= dt * множ;
-    if (расст < 14 && с.откатВыстрела <= 0 && лучСвободен(с.x, с.y, игрок.x, игрок.y)) {
-      с.откатВыстрела = случ(1.5, 3.0);
-      с.вспышка = 0.10;
+    e.mesh.position.set(e.x, 0, e.z);
+    e.mesh.rotation.y = e.yaw;
 
-      const шанс = огр(1 - расст / 20, 0.15, 0.85);
-      if (Math.random() < шанс) {
-        игрок.хп -= случ(6, 12);
-        игрок.тряска = Math.min(игрок.тряска + 8, 16);
-        вспышкаУрона = 0.35;
-        if (игрок.хп <= 0) {
-          игрок.хп = 0;
-          состояние = 'конец';
-          if (указательЗахвачен) document.exitPointerLock();
+    const bob = Math.sin(e.walkPhase) * 0.18;
+    e.mesh.userData.legs[0].position.z = bob;
+    e.mesh.userData.legs[1].position.z = -bob;
+
+    // Стрельба
+    e.fireCd -= dt * timeScale;
+    if (d < 16 && e.fireCd <= 0) {
+      e.fireCd = 1.5 + Math.random() * 2;
+      const chance = Math.max(0.1, 1 - d / 22);
+      if (Math.random() < chance) {
+        player.hp -= 5 + Math.random() * 6;
+        if (player.hp <= 0) {
+          player.hp = 0;
+          gameOver();
         }
       }
     }
   }
 
-  /* --- ЧАСТИЦЫ --- */
-  for (let i = эффекты.length - 1; i >= 0; i--) {
-    const ч = эффекты[i];
-    ч.жизнь -= dt;
-    if (ч.жизнь <= 0) { эффекты.splice(i, 1); continue; }
-    ч.x += ч.vx * dt;
-    ч.y += ч.vy * dt;
-    ч.vx *= Math.exp(-4 * dt);
-    ч.vy *= Math.exp(-4 * dt);
-  }
-
-  /* --- СПАВН ВРАГОВ --- */
-  таймерСпавна -= dt;
-  if (таймерСпавна <= 0) {
-    const макс = 4 + Math.min(10, Math.floor(время / 20));
-    const текущих = спрайты.filter(с => с.тип === 'враг').length;
-    if (текущих < макс) создатьВрага();
-    таймерСпавна = случ(0.8, 2.0);
+  // Спавн
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    const maxEnemies = 5 + Math.min(10, Math.floor(gameTime / 20));
+    if (enemies.length < maxEnemies) {
+      let x, z, tries = 0;
+      do {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 28 + Math.random() * 20;
+        x = player.x + Math.cos(angle) * dist;
+        z = player.z + Math.sin(angle) * dist;
+        tries++;
+      } while ((Math.abs(x) > 50 || z < -65 || z > 45) && tries < 10);
+      spawnEnemy(x, z);
+    }
+    spawnTimer = 1 + Math.random() * 2;
   }
 }
 
-/* ==========================================================
-   11. RAYCASTING РЕНДЕР
-   ========================================================== */
-function отрисоватьКадр() {
-  const горизонт = Math.floor(ВЫСОТА_БУФ / 2 + игрок.pitch);
+// ============================================================
+// 20. ОБНОВЛЕНИЕ КАМЕРЫ
+// ============================================================
+function updateCamera(dt) {
+  const targetX = player.x + Math.sin(cam.yaw) * cam.distance;
+  const targetZ = player.z + Math.cos(cam.yaw) * cam.distance;
+  const targetY = cam.height + cam.pitch * 4;
 
-  нарисоватьНебо(горизонт);
-  нарисоватьПол(горизонт);
-  нарисоватьСтены(горизонт);
-  нарисоватьСпрайты(горизонт);
+  const lerp = 1 - Math.pow(0.001, dt);
+  camera.position.x += (targetX - camera.position.x) * lerp;
+  camera.position.y += (targetY - camera.position.y) * lerp;
+  camera.position.z += (targetZ - camera.position.z) * lerp;
 
-  offCtx.putImageData(imageData, 0, 0);
+  camera.lookAt(player.x, 1.8, player.z);
 }
 
-/* ---------- Небо ---------- */
-function нарисоватьНебо(горизонт) {
-  /* Градиент от тёмно-синего сверху к тёплому оранжевому у горизонта */
-  for (let y = 0; y < горизонт; y++) {
-    const t = y / горизонт;
-    const r = Math.floor(60 + t * 190);
-    const g = Math.floor(80 + t * 110);
-    const b = Math.floor(150 + t * 10);
-    const ц = цвет(r, g, b);
-    const строка = y * ШИРИНА_БУФ;
-    for (let x = 0; x < ШИРИНА_БУФ; x++) буфер[строка + x] = ц;
-  }
-
-  /* Солнце на фиксированном азимуте */
-  const солнцеУгол = -Math.PI / 4;
-  const разн = солнцеУгол - игрок.угол;
-  const экX = Math.floor((0.5 + разн / (ПЛОСКОСТЬ_X * 2)) * ШИРИНА_БУФ);
-
-  if (экX > -100 && экX < ШИРИНА_БУФ + 100) {
-    const солнцеY = Math.floor(горизонт * 0.35);
-    const радиус = 40;
-    for (let y = Math.max(0, солнцеY - радиус); y < Math.min(горизонт, солнцеY + радиус); y++) {
-      for (let x = Math.max(0, экX - радиус); x < Math.min(ШИРИНА_БУФ, экX + радиус); x++) {
-        const dx = x - экX, dy = y - солнцеY;
-        const d = Math.hypot(dx, dy);
-        if (d > радиус) continue;
-        const яр = 1 - d / радиус;
-        const ц0 = буфер[y * ШИРИНА_БУФ + x];
-        const r0 = ц0 & 0xff;
-        const g0 = (ц0 >> 8) & 0xff;
-        const b0 = (ц0 >> 16) & 0xff;
-        const r = Math.min(255, r0 + 255 * яр * яр);
-        const g = Math.min(255, g0 + 220 * яр * яр);
-        const b = Math.min(255, b0 + 140 * яр * яр);
-        буфер[y * ШИРИНА_БУФ + x] = цвет(r | 0, g | 0, b | 0);
-      }
-    }
-  }
-
-  /* Облака — горизонтальные полосы */
-  for (let слой = 0; слой < 3; слой++) {
-    const облакY = горизонт * (0.15 + слой * 0.15);
-    const облакВыс = 6 + слой * 4;
-    for (let x = 0; x < ШИРИНА_БУФ; x += 1) {
-      const угол_x = игрок.угол + (x / ШИРИНА_БУФ - 0.5) * ПЛОСКОСТЬ_X * 2;
-      const шум = Math.sin(угол_x * 2.1 + слой * 1.7) * 0.5
-                + Math.sin(угол_x * 4.3 + слой) * 0.3
-                + Math.sin(угол_x * 7.7) * 0.2;
-      const яр = Math.max(0, шум * 0.5 + 0.3);
-
-      for (let y = Math.floor(облакY); y < Math.floor(облакY + облакВыс); y++) {
-        if (y < 0 || y >= горизонт) continue;
-        const ц0 = буфер[y * ШИРИНА_БУФ + x];
-        const r0 = ц0 & 0xff;
-        const g0 = (ц0 >> 8) & 0xff;
-        const b0 = (ц0 >> 16) & 0xff;
-        const см = яр * 0.35;
-        const r = r0 + (250 - r0) * см;
-        const g = g0 + (240 - g0) * см;
-        const b = b0 + (230 - b0) * см;
-        буфер[y * ШИРИНА_БУФ + x] = цвет(r | 0, g | 0, b | 0);
-      }
-    }
-  }
-}
-
-/* ---------- Пол ---------- */
-function нарисоватьПол(горизонт) {
-  const dirX = Math.cos(игрок.угол);
-  const dirY = Math.sin(игрок.угол);
-  const плоХ = -dirY * ПЛОСКОСТЬ_X;
-  const плоY =  dirX * ПЛОСКОСТЬ_X;
-
-  const лучX0 = dirX - плоХ;
-  const лучY0 = dirY - плоY;
-  const лучX1 = dirX + плоХ;
-  const лучY1 = dirY + плоY;
-
-  for (let y = горизонт + 1; y < ВЫСОТА_БУФ; y++) {
-    const p = y - горизонт;
-    const позРяда = (0.5 * ВЫСОТА_БУФ) / p;
-
-    const шагX = позРяда * (лучX1 - лучX0) / ШИРИНА_БУФ;
-    const шагY = позРяда * (лучY1 - лучY0) / ШИРИНА_БУФ;
-
-    let полX = игрок.x + позРяда * лучX0;
-    let полY = игрок.y + позРяда * лучY0;
-
-    const строка = y * ШИРИНА_БУФ;
-
-    /* Туман */
-    const туман = Math.min(1, позРяда / МАКС_ГЛУБИНА);
-    const затен = 1 - туман * 0.7;
-
-    for (let x = 0; x < ШИРИНА_БУФ; x++) {
-      const tx = (Math.floor(РАЗМЕР_ТЕКСТУРЫ * (полX - Math.floor(полX)))) & МАСКА_ТЕКСТУРЫ;
-      const ty = (Math.floor(РАЗМЕР_ТЕКСТУРЫ * (полY - Math.floor(полY)))) & МАСКА_ТЕКСТУРЫ;
-
-      const ц0 = ТЕКСТУРА_ПОЛА[РАЗМЕР_ТЕКСТУРЫ * ty + tx];
-      const r0 = (ц0 & 0xff) * затен;
-      const g0 = ((ц0 >> 8) & 0xff) * затен;
-      const b0 = ((ц0 >> 16) & 0xff) * затен;
-      буфер[строка + x] = цвет(r0 | 0, g0 | 0, b0 | 0);
-
-      полX += шагX;
-      полY += шагY;
-    }
-  }
-}
-
-/* ---------- Стены ---------- */
-function нарисоватьСтены(горизонт) {
-  const dirX = Math.cos(игрок.угол);
-  const dirY = Math.sin(игрок.угол);
-  const плоХ = -dirY * ПЛОСКОСТЬ_X;
-  const плоY =  dirX * ПЛОСКОСТЬ_X;
-
-  for (let x = 0; x < ШИРИНА_БУФ; x++) {
-    const камераX = 2 * x / ШИРИНА_БУФ - 1;
-    const лучX = dirX + плоХ * камераX;
-    const лучY = dirY + плоY * камераX;
-
-    let mapX = Math.floor(игрок.x);
-    let mapY = Math.floor(игрок.y);
-
-    const дельтаX = лучX === 0 ? 1e30 : Math.abs(1 / лучX);
-    const дельтаY = лучY === 0 ? 1e30 : Math.abs(1 / лучY);
-
-    let сторонаX, сторонаY;
-    let шагX, шагY;
-
-    if (лучX < 0) {
-      шагX = -1;
-      сторонаX = (игрок.x - mapX) * дельтаX;
-    } else {
-      шагX = 1;
-      сторонаX = (mapX + 1 - игрок.x) * дельтаX;
-    }
-
-    if (лучY < 0) {
-      шагY = -1;
-      сторонаY = (игрок.y - mapY) * дельтаY;
-    } else {
-      шагY = 1;
-      сторонаY = (mapY + 1 - игрок.y) * дельтаY;
-    }
-
-    let сторона = 0;
-    let клетка = 0;
-    let итераций = 0;
-
-    while (!клетка && итераций < 100) {
-      итераций++;
-      if (сторонаX < сторонаY) {
-        сторонаX += дельтаX;
-        mapX += шагX;
-        сторона = 0;
-      } else {
-        сторонаY += дельтаY;
-        mapY += шагY;
-        сторона = 1;
-      }
-      if (mapX < 0 || mapY < 0 || mapX >= РАЗМЕР_КАРТЫ || mapY >= РАЗМЕР_КАРТЫ) break;
-      клетка = КАРТА[mapY * РАЗМЕР_КАРТЫ + mapX];
-    }
-
-    if (!клетка) {
-      буферГлубины[x] = 1e30;
+// ============================================================
+// 21. ОБНОВЛЕНИЕ ЭФФЕКТОВ
+// ============================================================
+function updateEffects(dt) {
+  for (let i = effects.length - 1; i >= 0; i--) {
+    const ef = effects[i];
+    ef.life -= dt;
+    if (ef.life <= 0) {
+      scene.remove(ef.mesh);
+      ef.mesh.geometry.dispose();
+      ef.mesh.material.dispose();
+      effects.splice(i, 1);
       continue;
     }
+    ef.vy -= 9.8 * dt;
+    ef.mesh.position.x += ef.vx * dt;
+    ef.mesh.position.y += ef.vy * dt;
+    ef.mesh.position.z += ef.vz * dt;
 
-    const перпРасст = сторона === 0
-      ? (mapX - игрок.x + (1 - шагX) / 2) / лучX
-      : (mapY - игрок.y + (1 - шагY) / 2) / лучY;
-
-    буферГлубины[x] = перпРасст;
-
-    const высотаЛинии = Math.floor(ВЫСОТА_БУФ / перпРасст);
-
-    let низЭкрана = Math.floor(-высотаЛинии / 2 + горизонт);
-    let верхЭкрана = Math.floor( высотаЛинии / 2 + горизонт);
-
-    if (низЭкрана < 0) низЭкрана = 0;
-    if (верхЭкрана > ВЫСОТА_БУФ) верхЭкрана = ВЫСОТА_БУФ;
-
-    let стенаX = сторона === 0 ? игрок.y + перпРасст * лучY : игрок.x + перпРасст * лучX;
-    стенаX -= Math.floor(стенаX);
-
-    let texX = Math.floor(стенаX * РАЗМЕР_ТЕКСТУРЫ);
-    if (сторона === 0 && лучX > 0) texX = РАЗМЕР_ТЕКСТУРЫ - texX - 1;
-    if (сторона === 1 && лучY < 0) texX = РАЗМЕР_ТЕКСТУРЫ - texX - 1;
-
-    const текстура = ТЕКСТУРЫ[клетка] || ТЕКСТУРЫ[1];
-
-    const шагТекстуры = РАЗМЕР_ТЕКСТУРЫ / высотаЛинии;
-    let texPos = (низЭкрана - горизонт + высотаЛинии / 2) * шагТекстуры;
-
-    /* Затенение: сторона + туман */
-    const затенСтороны = сторона === 1 ? 0.72 : 1.0;
-    const туман = Math.min(1, перпРасст / МАКС_ГЛУБИНА);
-    const затенРасст = (1 - туман * 0.75);
-    const затен = затенСтороны * затенРасст;
-
-    for (let y = низЭкрана; y < верхЭкрана; y++) {
-      const texY = texPos & МАСКА_ТЕКСТУРЫ;
-      texPos += шагТекстуры;
-
-      const ц0 = текстура[РАЗМЕР_ТЕКСТУРЫ * texY + texX];
-      const r0 = (ц0 & 0xff) * затен;
-      const g0 = ((ц0 >> 8) & 0xff) * затен;
-      const b0 = ((ц0 >> 16) & 0xff) * затен;
-      буфер[y * ШИРИНА_БУФ + x] = цвет(r0 | 0, g0 | 0, b0 | 0);
-    }
+    // Затухание
+    const t = ef.life / ef.maxLife;
+    ef.mesh.scale.setScalar(Math.max(0.1, t));
   }
 }
 
-/* ---------- Спрайты ---------- */
-function нарисоватьСпрайты(горизонт) {
-  const список = [];
-  for (const с of спрайты) {
-    const dx = с.x - игрок.x;
-    const dy = с.y - игрок.y;
-    с.расст = dx * dx + dy * dy;
-    список.push(с);
-  }
-  список.sort((a, b) => b.расст - a.расст);
+// ============================================================
+// 22. HUD
+// ============================================================
+const hpFill = document.getElementById('hpFill');
+const ammoNum = document.getElementById('ammoNum');
+const fpsEl = document.getElementById('fps');
+const btnFire = document.getElementById('btnFire');
+const btnReload = document.getElementById('btnReload');
+const btnHorse = document.getElementById('btnHorse');
 
-  const dirX = Math.cos(игрок.угол);
-  const dirY = Math.sin(игрок.угол);
-  const плоХ = -dirY * ПЛОСКОСТЬ_X;
-  const плоY =  dirX * ПЛОСКОСТЬ_X;
+let fpsCounter = 0, fpsTimer = 0;
 
-  const invDet = 1.0 / (плоХ * dirY - dirX * плоY);
+function positionButtons() {
+  const w = window.innerWidth, h = window.innerHeight;
+  btnFire.style.left = (w - 85 - 55) + 'px';
+  btnFire.style.top = (h - 145 - 55) + 'px';
+  btnReload.style.left = (w - 210 - 32) + 'px';
+  btnReload.style.top = (h - 55 - 32) + 'px';
+  btnHorse.style.left = (w - 55 - 32) + 'px';
+  btnHorse.style.top = (h - 55 - 32) + 'px';
+}
+positionButtons();
 
-  for (const с of список) {
-    const спрайтX = с.x - игрок.x;
-    const спрайтY = с.y - игрок.y;
+function updateHUD(dt) {
+  hpFill.style.width = (player.hp / player.maxHp * 100) + '%';
+  ammoNum.textContent = player.ammo;
 
-    const transformX = invDet * (dirY * спрайтX - dirX * спрайтY);
-    const transformY = invDet * (-плоY * спрайтX + плоХ * спрайтY);
+  if (player.reload > 0) ammoNum.style.color = '#d8a83a';
+  else if (player.ammo === 0) ammoNum.style.color = '#c0392b';
+  else ammoNum.style.color = '#fff8e0';
 
-    if (transformY <= 0.15) continue;
-
-    const экранX = Math.floor((ШИРИНА_БУФ / 2) * (1 + transformX / transformY));
-
-    const высотаСпрайта = Math.abs(Math.floor(ВЫСОТА_БУФ / transformY)) * с.высота;
-    const ширинаСпрайта = Math.abs(Math.floor(ВЫСОТА_БУФ / transformY)) * с.ширина;
-
-    const верхY = -высотаСпрайта / 2 + горизонт;
-    const низY  =  высотаСпрайта / 2 + горизонт;
-
-    let y0 = Math.max(0, Math.floor(верхY));
-    let y1 = Math.min(ВЫСОТА_БУФ, Math.floor(низY));
-
-    let x0 = Math.max(0, Math.floor(экранX - ширинаСпрайта / 2));
-    let x1 = Math.min(ШИРИНА_БУФ, Math.floor(экранX + ширинаСпрайта / 2));
-
-    const текстура = с.текстура;
-    const туман = Math.min(1, transformY / МАКС_ГЛУБИНА);
-    const затен = (1 - туман * 0.6);
-    const вспышка = с.вспышка > 0 ? 1 : 0;
-
-    for (let x = x0; x < x1; x++) {
-      if (transformY >= буферГлубины[x]) continue;
-
-      const texX = Math.floor(((x - (экранX - ширинаСпрайта / 2)) / ширинаСпрайта) * РАЗМЕР_ТЕКСТУРЫ);
-      if (texX < 0 || texX >= РАЗМЕР_ТЕКСТУРЫ) continue;
-
-      for (let y = y0; y < y1; y++) {
-        const texY = Math.floor(((y - верхY) / (низY - верхY)) * РАЗМЕР_ТЕКСТУРЫ);
-        if (texY < 0 || texY >= РАЗМЕР_ТЕКСТУРЫ) continue;
-
-        const ц0 = текстура[РАЗМЕР_ТЕКСТУРЫ * texY + texX];
-        const a0 = (ц0 >> 24) & 0xff;
-        if (a0 < 128) continue;
-
-        let r0 = (ц0 & 0xff) * затен;
-        let g0 = ((ц0 >> 8) & 0xff) * затен;
-        let b0 = ((ц0 >> 16) & 0xff) * затен;
-
-        if (вспышка) r0 = Math.min(255, r0 + 60);
-        if (с.уронВспышка > 0) {
-          r0 = Math.min(255, r0 + 80);
-          g0 *= 0.5;
-          b0 *= 0.5;
-        }
-
-        буфер[y * ШИРИНА_БУФ + x] = цвет(r0 | 0, g0 | 0, b0 | 0);
-      }
-    }
-  }
-
-  /* Частицы */
-  for (const ч of эффекты) {
-    const спрайтX = ч.x - игрок.x;
-    const спрайтY = ч.y - игрок.y;
-    const transformX = invDet * (dirY * спрайтX - dirX * спрайтY);
-    const transformY = invDet * (-плоY * спрайтX + плоХ * спрайтY);
-    if (transformY <= 0.15) continue;
-
-    const экранX = Math.floor((ШИРИНА_БУФ / 2) * (1 + transformX / transformY));
-    const экранY = Math.floor(горизонт + 4 / transformY);
-
-    const размер = Math.max(1, Math.floor(4 / transformY));
-
-    const a0 = ч.жизнь / ч.макс;
-    const r0 = parseInt(ч.цвет.slice(1, 3), 16);
-    const g0 = parseInt(ч.цвет.slice(3, 5), 16);
-    const b0 = parseInt(ч.цвет.slice(5, 7), 16);
-
-    for (let dy = -размер; dy <= размер; dy++) {
-      for (let dx = -размер; dx <= размер; dx++) {
-        const x = экранX + dx;
-        const y = экранY + dy;
-        if (x < 0 || x >= ШИРИНА_БУФ || y < 0 || y >= ВЫСОТА_БУФ) continue;
-        if (transformY >= буферГлубины[x]) continue;
-        const ц0 = буфер[y * ШИРИНА_БУФ + x];
-        const r1 = r0 * a0 + (ц0 & 0xff) * (1 - a0);
-        const g1 = g0 * a0 + ((ц0 >> 8) & 0xff) * (1 - a0);
-        const b1 = b0 * a0 + ((ц0 >> 16) & 0xff) * (1 - a0);
-        буфер[y * ШИРИНА_БУФ + x] = цвет(r1 | 0, g1 | 0, b1 | 0);
-      }
-    }
+  fpsCounter++;
+  fpsTimer += dt;
+  if (fpsTimer >= 0.5) {
+    fpsEl.textContent = Math.round(fpsCounter / fpsTimer) + ' FPS';
+    fpsCounter = 0;
+    fpsTimer = 0;
   }
 }
 
-/* ==========================================================
-   12. ПОВЕРХ 3D — оружие, HUD
-   ========================================================== */
-function нарисоватьПоверх() {
-  let тряскаX = 0, тряскаY = 0;
-  if (игрок.тряска > 0) {
-    тряскаX = (Math.random() - 0.5) * игрок.тряска * 3;
-    тряскаY = (Math.random() - 0.5) * игрок.тряска * 3;
-  }
+// ============================================================
+// 23. СТАРТ/КОНЕЦ
+// ============================================================
+function startGame() {
+  state = 'play';
+  document.getElementById('menu').classList.add('hidden');
+  document.getElementById('gameover').classList.add('hidden');
 
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
+  player.x = 0; player.z = 15;
+  player.yaw = Math.PI;
+  player.hp = 100;
+  player.ammo = 6;
+  player.reserve = 42;
+  player.reload = 0;
+  player.fireCd = 0;
+  player.mounted = true;
+  player.walkPhase = 0;
 
-  /* Рисуем с небольшим запасом и сглаживанием */
-  ctx.drawImage(
-    offCanvas,
-    0, 0, ШИРИНА_БУФ, ВЫСОТА_БУФ,
-    тряскаX, тряскаY, Ш_ЭКРАНА, В_ЭКРАНА
-  );
+  cam.yaw = 0;
+  cam.pitch = 0.15;
 
-  if (состояние === 'меню') { нарисоватьМеню(); return; }
-  if (состояние === 'конец') { нарисоватьКонец(); return; }
+  // Очистка
+  for (const e of enemies) scene.remove(e.mesh);
+  enemies.length = 0;
+  for (const ef of effects) scene.remove(ef.mesh);
+  effects.length = 0;
 
-  /* Вспышка урона */
-  if (вспышкаУрона > 0) {
-    const гр = ctx.createRadialGradient(Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.min(Ш_ЭКРАНА, В_ЭКРАНА) * 0.1,
-                                          Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.max(Ш_ЭКРАНА, В_ЭКРАНА) * 0.75);
-    гр.addColorStop(0, 'rgba(150,10,10,0)');
-    гр.addColorStop(1, 'rgba(180,10,10,' + (вспышкаУрона * 1.5) + ')');
-    ctx.fillStyle = гр;
-    ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
-  }
+  score = 0;
+  kills = 0;
+  gameTime = 0;
+  spawnTimer = 0.5;
+  deadEye = 1;
+  deadEyeActive = false;
 
-  /* Оружие (рисуется до HUD, чтобы HUD был сверху) */
-  нарисоватьРевольвер();
-
-  /* Прицел */
-  нарисоватьПрицел();
-
-  /* HUD */
-  нарисоватьHUD();
-
-  /* Эффект Меткого глаза */
-  if (игрок.мгАктивен) {
-    ctx.fillStyle = 'rgba(160,120,20,0.10)';
-    ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
-
-    const гр = ctx.createRadialGradient(Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.min(Ш_ЭКРАНА, В_ЭКРАНА) * 0.15,
-                                          Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.max(Ш_ЭКРАНА, В_ЭКРАНА) * 0.6);
-    гр.addColorStop(0, 'rgba(0,0,0,0)');
-    гр.addColorStop(1, 'rgba(60,35,0,0.55)');
-    ctx.fillStyle = гр;
-    ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
-  }
-
-  /* Постоянная лёгкая виньетка */
-  const вг = ctx.createRadialGradient(Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.min(Ш_ЭКРАНА, В_ЭКРАНА) * 0.4,
-                                        Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.max(Ш_ЭКРАНА, В_ЭКРАНА) * 0.75);
-  вг.addColorStop(0, 'rgba(0,0,0,0)');
-  вг.addColorStop(1, 'rgba(0,0,0,0.45)');
-  ctx.fillStyle = вг;
-  ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
-
-  /* Подсказка */
-  if (таймерПодсказки > 0 && состояние === 'игра') {
-    const a = Math.min(1, таймерПодсказки / 0.6);
-    ctx.globalAlpha = a;
-    ctx.fillStyle = 'rgba(240,220,174,0.95)';
-    ctx.font = 'bold 16px Georgia, serif';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(0,0,0,0.9)';
-    ctx.shadowBlur = 8;
-    const сообщение = ЭТО_ТАЧ
-      ? 'Левый палец — движение · Правый — обзор, тап — выстрел'
-      : 'WASD — движение · Мышь — обзор · ЛКМ — огонь · R — перезарядка · Q — Меткий глаз';
-    ctx.fillText(сообщение, Ш_ЭКРАНА / 2, 60);
-    ctx.shadowBlur = 0;
-    ctx.textAlign = 'left';
-    ctx.globalAlpha = 1;
-  }
-
-  /* Тач-управление */
-  if (ЭТО_ТАЧ && состояние === 'игра') {
-    нарисоватьКнопкиТач();
-    нарисоватьСтик(левыйСтик, 'rgba(220,190,140,0.55)');
-    if (правыйСтик.активен) {
-      ctx.save();
-      ctx.strokeStyle = 'rgba(220,120,60,0.55)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(правыйСтик.ox, правыйСтик.oy, 40, 0, ДВА_ПИ);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(220,120,60,0.5)';
-      ctx.beginPath();
-      ctx.arc(правыйСтик.ox, правыйСтик.oy, 12, 0, ДВА_ПИ);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-}
-
-/* ---------- Револьвер (детальный, нарисован через canvas) ---------- */
-function нарисоватьРевольвер() {
-  /* Покачивание от ходьбы и дыхания */
-  const качX = Math.sin(игрок.фазаШага) * 8;
-  const качY = Math.abs(Math.cos(игрок.фазаШага)) * 6;
-  const дыхX = Math.sin(performance.now() / 1400) * 3;
-  const дыхY = Math.cos(performance.now() / 1600) * 2;
-
-  /* Отдача */
-  const откат = игрок.откатВыстрела > 0 ? (игрок.откатВыстрела / 0.30) * 26 : 0;
-  const подброс = игрок.откатВыстрела > 0 ? (игрок.откатВыстрела / 0.30) * 12 : 0;
-
-  const базX = Ш_ЭКРАНА * 0.72;
-  const базY = В_ЭКРАНА * 0.92;
-
-  ctx.save();
-  ctx.translate(базX + качX + дыхX, базY - качY + дыхY + откат - подброс * 0.2);
-  ctx.rotate(-0.05 + откат * 0.002);
-
-  /* Масштаб в зависимости от размера экрана */
-  const масштаб = Math.min(Ш_ЭКРАНА / 1400, В_ЭКРАНА / 900) * 1.1;
-  ctx.scale(масштаб, масштаб);
-
-  /* === ТЕНЬ ОРУЖИЯ === */
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  ctx.beginPath();
-  ctx.ellipse(20, 60, 160, 40, 0, 0, ДВА_ПИ);
-  ctx.fill();
-
-  /* === РУКА (рукав + кисть) === */
-  /* Рукав */
-  const рукавГр = ctx.createLinearGradient(60, 0, 200, 40);
-  рукавГр.addColorStop(0, '#2f2449');
-  рукавГр.addColorStop(0.5, '#4a3a6b');
-  рукавГр.addColorStop(1, '#2f2449');
-  ctx.fillStyle = рукавГр;
-  ctx.beginPath();
-  ctx.moveTo(30, 20);
-  ctx.lineTo(150, 30);
-  ctx.lineTo(160, 80);
-  ctx.lineTo(20, 85);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = '#1a1228';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  /* Складки рукава */
-  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-  ctx.lineWidth = 1.5;
-  for (let i = 0; i < 3; i++) {
-    ctx.beginPath();
-    ctx.moveTo(60 + i * 30, 30);
-    ctx.lineTo(55 + i * 30, 80);
-    ctx.stroke();
-  }
-
-  /* Кисть руки */
-  const кистьГр = ctx.createRadialGradient(30, 60, 5, 40, 65, 40);
-  кистьГр.addColorStop(0, '#e5b487');
-  кистьГр.addColorStop(1, '#b08456');
-  ctx.fillStyle = кистьГр;
-  ctx.beginPath();
-  ctx.ellipse(40, 65, 30, 22, -0.1, 0, ДВА_ПИ);
-  ctx.fill();
-  ctx.strokeStyle = '#7a4f2a';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  /* Пальцы (обхватывают рукоять) */
-  for (let i = 0; i < 3; i++) {
-    const пальцY = 55 + i * 9;
-    ctx.fillStyle = '#d9a679';
-    ctx.beginPath();
-    ctx.ellipse(28, пальцY, 9, 5, -0.4, 0, ДВА_ПИ);
-    ctx.fill();
-    ctx.strokeStyle = '#8a5c30';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    /* Ноготь */
-    ctx.fillStyle = 'rgba(255,240,210,0.6)';
-    ctx.beginPath();
-    ctx.ellipse(20, пальцY - 1, 2, 1.2, -0.4, 0, ДВА_ПИ);
-    ctx.fill();
-  }
-
-  /* === РЕВОЛЬВЕР === */
-
-  /* Рукоять */
-  const рукоятьГр = ctx.createLinearGradient(-20, -10, 20, 40);
-  рукоятьГр.addColorStop(0, '#8a5a30');
-  рукоятьГр.addColorStop(0.5, '#5a3a20');
-  рукоятьГр.addColorStop(1, '#2a1a08');
-  ctx.fillStyle = рукоятьГр;
-  ctx.beginPath();
-  ctx.moveTo(-30, 10);
-  ctx.lineTo(10, 5);
-  ctx.lineTo(25, 45);
-  ctx.lineTo(-10, 50);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = '#1a0f05';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  /* Населчки на рукояти */
-  ctx.strokeStyle = 'rgba(30,15,5,0.5)';
-  ctx.lineWidth = 0.8;
-  for (let i = 0; i < 8; i++) {
-    ctx.beginPath();
-    const y = 12 + i * 4.5;
-    ctx.moveTo(-22 + i * 1, y);
-    ctx.lineTo(5 + i * 2, y + 3);
-    ctx.stroke();
-  }
-
-  /* Блик на рукояти */
-  ctx.fillStyle = 'rgba(255,220,160,0.20)';
-  ctx.beginPath();
-  ctx.moveTo(-20, 14);
-  ctx.lineTo(-5, 10);
-  ctx.lineTo(0, 25);
-  ctx.lineTo(-15, 28);
-  ctx.closePath();
-  ctx.fill();
-
-  /* Рамка / корпус револьвера */
-  const корпусГр = ctx.createLinearGradient(0, -30, 0, 0);
-  корпусГр.addColorStop(0, '#5a5a66');
-  корпусГр.addColorStop(0.4, '#3a3a44');
-  корпусГр.addColorStop(1, '#1a1a22');
-  ctx.fillStyle = корпусГр;
-  ctx.beginPath();
-  ctx.moveTo(-35, -20);
-  ctx.lineTo(20, -20);
-  ctx.lineTo(30, 5);
-  ctx.lineTo(-25, 10);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = '#0a0a10';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  /* Блик на корпусе */
-  ctx.fillStyle = 'rgba(200,200,220,0.25)';
-  ctx.fillRect(-32, -18, 48, 2);
-
-  /* Барабан */
-  ctx.fillStyle = '#3a3a44';
-  ctx.beginPath();
-  ctx.arc(-10, -8, 20, 0, ДВА_ПИ);
-  ctx.fill();
-  ctx.strokeStyle = '#0a0a10';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  /* Камеры барабана */
+  // Стартовые враги — впереди, на улице
   for (let i = 0; i < 6; i++) {
-    const уг = (i / 6) * ДВА_ПИ - 0.3;
-    const кx = -10 + Math.cos(уг) * 11;
-    const кy = -8 + Math.sin(уг) * 11;
-    /* Тёмное отверстие */
-    ctx.fillStyle = '#0a0a10';
-    ctx.beginPath();
-    ctx.arc(кx, кy, 4, 0, ДВА_ПИ);
-    ctx.fill();
-    /* Блик */
-    ctx.fillStyle = 'rgba(180,180,200,0.4)';
-    ctx.beginPath();
-    ctx.arc(кx - 1, кy - 1, 1.5, 0, ДВА_ПИ);
-    ctx.fill();
+    spawnEnemy(
+      (Math.random() - 0.5) * 8,
+      -8 - Math.random() * 25
+    );
   }
 
-  /* Ось барабана */
-  ctx.fillStyle = '#1a1a22';
-  ctx.beginPath();
-  ctx.arc(-10, -8, 3, 0, ДВА_ПИ);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(180,180,200,0.5)';
-  ctx.beginPath();
-  ctx.arc(-11, -9, 1, 0, ДВА_ПИ);
-  ctx.fill();
-
-  /* Ствол */
-  const стволГр = ctx.createLinearGradient(0, -40, 0, -25);
-  стволГр.addColorStop(0, '#5a5a66');
-  стволГр.addColorStop(0.3, '#3a3a44');
-  стволГр.addColorStop(1, '#1a1a22');
-  ctx.fillStyle = стволГр;
-  ctx.fillRect(-160, -32, 130, 12);
-  ctx.strokeStyle = '#0a0a10';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(-160, -32, 130, 12);
-
-  /* Верхний блик на стволе */
-  ctx.fillStyle = 'rgba(220,220,240,0.35)';
-  ctx.fillRect(-158, -31, 126, 1.5);
-
-  /* Нижний тёмный край */
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(-158, -22, 126, 1.5);
-
-  /* Вентиляционная планка сверху ствола */
-  ctx.fillStyle = '#2a2a34';
-  ctx.fillRect(-155, -36, 100, 4);
-  ctx.strokeStyle = '#0a0a10';
-  ctx.strokeRect(-155, -36, 100, 4);
-  ctx.fillStyle = 'rgba(180,180,200,0.3)';
-  ctx.fillRect(-154, -35.5, 98, 1);
-
-  /* Мушка на конце ствола */
-  ctx.fillStyle = '#1a1a22';
-  ctx.beginPath();
-  ctx.moveTo(-158, -36);
-  ctx.lineTo(-150, -36);
-  ctx.lineTo(-154, -42);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = '#0a0a10';
-  ctx.stroke();
-
-  /* Курок */
-  ctx.fillStyle = '#2a2a34';
-  ctx.beginPath();
-  ctx.moveTo(15, -22);
-  ctx.lineTo(28, -30);
-  ctx.lineTo(32, -22);
-  ctx.lineTo(22, -16);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = '#0a0a10';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  /* Населчка на курке */
-  ctx.strokeStyle = 'rgba(180,180,200,0.4)';
-  ctx.lineWidth = 0.8;
-  for (let i = 0; i < 4; i++) {
-    ctx.beginPath();
-    ctx.moveTo(20 + i * 3, -27 + i * 1.5);
-    ctx.lineTo(24 + i * 3, -23 + i * 1.5);
-    ctx.stroke();
-  }
-
-  /* Спусковая скоба */
-  ctx.strokeStyle = '#1a1a22';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(-5, 8, 15, Math.PI * 0.05, Math.PI * 0.95, true);
-  ctx.stroke();
-
-  /* Спусковой крючок */
-  ctx.fillStyle = '#2a2a34';
-  ctx.beginPath();
-  ctx.moveTo(-4, 6);
-  ctx.lineTo(-2, 20);
-  ctx.lineTo(2, 20);
-  ctx.lineTo(4, 6);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = '#0a0a10';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  /* === ВСПЫШКА ВЫСТРЕЛА === */
-  if (игрок.вспышкаСтвола > 0) {
-    const яр = игрок.вспышкаСтвола / 0.10;
-
-    /* Основная яркая вспышка */
-    const вспГр = ctx.createRadialGradient(-160, -26, 2, -160, -26, 80 * яр);
-    вспГр.addColorStop(0, 'rgba(255,255,220,' + яр + ')');
-    вспГр.addColorStop(0.3, 'rgba(255,220,110,' + (яр * 0.85) + ')');
-    вспГр.addColorStop(0.6, 'rgba(255,150,40,' + (яр * 0.4) + ')');
-    вспГр.addColorStop(1, 'rgba(255,60,10,0)');
-    ctx.fillStyle = вспГр;
-    ctx.beginPath();
-    ctx.arc(-160, -26, 80 * яр, 0, ДВА_ПИ);
-    ctx.fill();
-
-    /* Ядро */
-    ctx.fillStyle = 'rgba(255,255,240,' + яр + ')';
-    ctx.beginPath();
-    ctx.arc(-160, -26, 12 * яр, 0, ДВА_ПИ);
-    ctx.fill();
-
-    /* Лучи вспышки */
-    ctx.strokeStyle = 'rgba(255,220,140,' + (яр * 0.8) + ')';
-    ctx.lineWidth = 3 * яр;
-    for (let i = 0; i < 6; i++) {
-      const уг = (i / 6) * ДВА_ПИ + performance.now() * 0.001;
-      ctx.beginPath();
-      ctx.moveTo(-160, -26);
-      ctx.lineTo(-160 + Math.cos(уг) * (60 + Math.random() * 30),
-                 -26 + Math.sin(уг) * (60 + Math.random() * 30));
-      ctx.stroke();
-    }
-  }
-
-  /* Дым после выстрела */
-  if (игрок.дым > 0) {
-    const плотн = игрок.дым / 0.4;
-    for (let i = 0; i < 5; i++) {
-      const смещ = (1 - плотн) * 40 + i * 15;
-      const x = -160 + Math.sin(i * 1.3) * 8;
-      const y = -26 - смещ;
-      const r = 8 + i * 4 + (1 - плотн) * 20;
-      const альфа = плотн * (1 - i * 0.15);
-      const г = ctx.createRadialGradient(x, y, 0, x, y, r);
-      г.addColorStop(0, 'rgba(200,200,200,' + (альфа * 0.4) + ')');
-      г.addColorStop(1, 'rgba(150,150,150,0)');
-      ctx.fillStyle = г;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, ДВА_ПИ);
-      ctx.fill();
-    }
-  }
-
-  ctx.restore();
+  // Камера сразу за игроком
+  camera.position.set(
+    player.x + Math.sin(cam.yaw) * cam.distance,
+    cam.height,
+    player.z + Math.cos(cam.yaw) * cam.distance
+  );
+  camera.lookAt(player.x, 1.8, player.z);
 }
 
-/* ---------- Прицел ---------- */
-function нарисоватьПрицел() {
-  const цx = Ш_ЭКРАНА / 2;
-  const цy = В_ЭКРАНА / 2;
-
-  ctx.save();
-
-  const светл = 'rgba(240,220,174,0.9)';
-  const тёмный = 'rgba(20,10,5,0.6)';
-
-  /* Тень под прицелом для читаемости */
-  ctx.strokeStyle = тёмный;
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(цx - 12, цy); ctx.lineTo(цx - 4, цy);
-  ctx.moveTo(цx + 4, цy);  ctx.lineTo(цx + 12, цy);
-  ctx.moveTo(цx, цy - 12); ctx.lineTo(цx, цy - 4);
-  ctx.moveTo(цx, цy + 4);  ctx.lineTo(цx, цy + 12);
-  ctx.stroke();
-
-  ctx.strokeStyle = светл;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(цx - 12, цy); ctx.lineTo(цx - 4, цy);
-  ctx.moveTo(цx + 4, цy);  ctx.lineTo(цx + 12, цy);
-  ctx.moveTo(цx, цy - 12); ctx.lineTo(цx, цy - 4);
-  ctx.moveTo(цx, цy + 4);  ctx.lineTo(цx, цy + 12);
-  ctx.stroke();
-
-  /* Центральная точка */
-  ctx.fillStyle = светл;
-  ctx.beginPath();
-  ctx.arc(цx, цy, 1.8, 0, ДВА_ПИ);
-  ctx.fill();
-
-  /* Тонкое кольцо */
-  ctx.strokeStyle = 'rgba(240,220,174,0.3)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.arc(цx, цy, 24, 0, ДВА_ПИ);
-  ctx.stroke();
-
-  /* В режиме Меткого глаза — жёлтая метка */
-  if (игрок.мгАктивен) {
-    ctx.strokeStyle = 'rgba(255,235,150,0.95)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(цx, цy, 16, 0, ДВА_ПИ);
-    ctx.stroke();
-  }
-
-  ctx.restore();
+function gameOver() {
+  state = 'gameover';
+  document.getElementById('gameover').classList.remove('hidden');
+  document.getElementById('finalScore').textContent = '$ ' + score;
+  document.getElementById('finalKills').textContent = kills;
+  if (pointerLocked) document.exitPointerLock();
 }
 
-/* ---------- HUD ---------- */
-function нарисоватьHUD() {
-  /* Фон HUD-панели снизу */
-  const панельВысота = 90;
-  const гр = ctx.createLinearGradient(0, В_ЭКРАНА - панельВысота, 0, В_ЭКРАНА);
-  гр.addColorStop(0, 'rgba(0,0,0,0)');
-  гр.addColorStop(1, 'rgba(0,0,0,0.55)');
-  ctx.fillStyle = гр;
-  ctx.fillRect(0, В_ЭКРАНА - панельВысота, Ш_ЭКРАНА, панельВысота);
-
-  /* Здоровье */
-  const бw = 260, бh = 14, бx = 30, бy = В_ЭКРАНА - 110;
-
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  скругПрямоуг(бx - 8, бy - 8, бw + 16, бh + 16, 8);
-  ctx.fill();
-
-  ctx.fillStyle = 'rgba(58,20,15,0.95)';
-  скругПрямоуг(бx, бy, бw, бh, 5);
-  ctx.fill();
-
-  const шз = бw * (игрок.хп / игрок.максХп);
-  if (шз > 0) {
-    const гр2 = ctx.createLinearGradient(бx, бy, бx, бy + бh);
-    гр2.addColorStop(0, '#e0503c');
-    гр2.addColorStop(1, '#8f1d16');
-    ctx.fillStyle = гр2;
-    скругПрямоуг(бx, бy, шз, бh, 5);
-    ctx.fill();
-  }
-
-  /* Блик на полосе */
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
-  скругПрямоуг(бx, бy, бw, бh / 2, 5);
-  ctx.fill();
-
-  ctx.strokeStyle = 'rgba(230,200,150,0.45)';
-  ctx.lineWidth = 1.5;
-  скругПрямоуг(бx, бy, бw, бh, 5);
-  ctx.stroke();
-
-  /* Иконка сердца слева от полосы */
-  ctx.fillStyle = '#e0503c';
-  нарисоватьСердце(бx - 22, бy + бh / 2, 9);
-
-  ctx.fillStyle = 'rgba(240,220,174,0.85)';
-  ctx.font = 'bold 11px Georgia, serif';
-  ctx.textAlign = 'left';
-  ctx.fillText('ЗДОРОВЬЕ', бx + 2, бy - 10);
-
-  /* Меткий глаз */
-  const дy = бy + бh + 20, дh = 9;
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  скругПрямоуг(бx - 8, дy - 8, бw + 16, дh + 16, 8);
-  ctx.fill();
-
-  ctx.fillStyle = 'rgba(48,36,14,0.95)';
-  скругПрямоуг(бx, дy, бw, дh, 5);
-  ctx.fill();
-
-  const шд = бw * игрок.меткийГлаз;
-  if (шд > 0) {
-    const гр3 = ctx.createLinearGradient(бx, дy, бx + шд, дy);
-    гр3.addColorStop(0, '#d8a83a');
-    гр3.addColorStop(1, игрок.мгАктивен ? '#fff2b0' : '#e8c058');
-    ctx.fillStyle = гр3;
-    скругПрямоуг(бx, дy, шд, дh, 5);
-    ctx.fill();
-  }
-
-  ctx.strokeStyle = 'rgba(230,200,150,0.45)';
-  ctx.lineWidth = 1.5;
-  скругПрямоуг(бx, дy, бw, дh, 5);
-  ctx.stroke();
-
-  ctx.fillStyle = 'rgba(240,220,174,0.85)';
-  ctx.font = 'bold 11px Georgia, serif';
-  ctx.fillText('МЕТКИЙ ГЛАЗ', бx + 2, дy - 10);
-
-  /* Иконка глаза */
-  нарисоватьГлаз(бx - 22, дy + дh / 2, 9, игрок.мгАктивен);
-
-  /* Патроны */
-  ctx.font = 'bold 34px Georgia, serif';
-  ctx.fillStyle = игрок.патроны > 0 ? '#f0dcae' : '#c0392b';
-  ctx.textAlign = 'right';
-  ctx.shadowColor = 'rgba(0,0,0,0.8)';
-  ctx.shadowBlur = 6;
-  ctx.fillText(игрок.патроны, Ш_ЭКРАНА - 110, бy + 30);
-  ctx.font = 'bold 20px Georgia, serif';
-  ctx.fillStyle = 'rgba(240,220,174,0.55)';
-  ctx.fillText('/ ' + игрок.запас, Ш_ЭКРАНА - 30, бy + 30);
-  ctx.shadowBlur = 0;
-
-  ctx.textAlign = 'left';
-  ctx.font = 'bold 11px Georgia, serif';
-  ctx.fillStyle = 'rgba(240,220,174,0.7)';
-  ctx.fillText('ПАТРОНЫ', Ш_ЭКРАНА - 110, бy - 10);
-
-  /* Счёт */
-  ctx.textAlign = 'right';
-  ctx.font = 'bold 26px Georgia, serif';
-  ctx.fillStyle = '#f0dcae';
-  ctx.shadowColor = 'rgba(0,0,0,0.9)';
-  ctx.shadowBlur = 6;
-  ctx.fillText('$ ' + счёт, Ш_ЭКРАНА - 30, 190);
-  ctx.font = '14px Georgia, serif';
-  ctx.fillStyle = 'rgba(240,220,174,0.75)';
-  ctx.fillText('Убито: ' + убийств, Ш_ЭКРАНА - 30, 212);
-  ctx.fillText('Время: ' + Math.floor(время) + 'с', Ш_ЭКРАНА - 30, 232);
-  ctx.shadowBlur = 0;
-  ctx.textAlign = 'left';
-
-  /* Индикатор перезарядки */
-  if (игрок.перезарядка > 0) {
-    const прогр = 1 - игрок.перезарядка / 1.6;
-    const цx = Ш_ЭКРАНА / 2;
-    const цy = В_ЭКРАНА / 2 + 60;
-
-    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.arc(цx, цy, 22, -Math.PI / 2, -Math.PI / 2 + ДВА_ПИ);
-    ctx.stroke();
-
-    ctx.strokeStyle = '#e8c98a';
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.arc(цx, цy, 22, -Math.PI / 2, -Math.PI / 2 + ДВА_ПИ * прогр);
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(240,220,174,0.95)';
-    ctx.font = 'bold 13px Georgia, serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('ПЕРЕЗАРЯДКА', цx, цy + 46);
-    ctx.textAlign = 'left';
-  }
-
-  /* Мини-карта */
-  нарисоватьМиниКарту();
-}
-
-function скругПрямоуг(c, x, y, w, h, r) {
-  r = Math.min(r, w * 0.5, h * 0.5);
-  c.beginPath();
-  c.moveTo(x + r, y);
-  c.arcTo(x + w, y,     x + w, y + h, r);
-  c.arcTo(x + w, y + h, x,     y + h, r);
-  c.arcTo(x,     y + h, x,     y,     r);
-  c.arcTo(x,     y,     x + w, y,     r);
-  c.closePath();
-}
-
-function нарисоватьСердце(x, y, r) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.beginPath();
-  ctx.moveTo(0, r * 0.3);
-  ctx.bezierCurveTo(-r, -r * 0.4, -r, -r, 0, -r * 0.5);
-  ctx.bezierCurveTo(r, -r, r, -r * 0.4, 0, r * 0.3);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-}
-
-function нарисоватьГлаз(x, y, r, активен) {
-  ctx.save();
-  ctx.translate(x, y);
-
-  /* Внешний контур */
-  ctx.strokeStyle = активен ? '#fff2b0' : '#d8a83a';
-  ctx.lineWidth = 1.8;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, r, r * 0.6, 0, 0, ДВА_ПИ);
-  ctx.stroke();
-
-  /* Зрачок */
-  ctx.fillStyle = активен ? '#fff2b0' : '#d8a83a';
-  ctx.beginPath();
-  ctx.arc(0, 0, r * 0.35, 0, ДВА_ПИ);
-  ctx.fill();
-
-  ctx.restore();
-}
-
-/* ---------- Мини-карта ---------- */
-function нарисоватьМиниКарту() {
-  const S = 150;
-  const px = Ш_ЭКРАНА - S - 20;
-  const py = 20;
-  const дальность = 12;
-  const к = S / (дальность * 2);
-  const цx = px + S / 2;
-  const цy = py + S / 2;
-
-  ctx.save();
-  ctx.beginPath();
-  скругПрямоуг(ctx, px, py, S, S, 8);
-  ctx.clip();
-
-  ctx.fillStyle = 'rgba(22,14,7,0.85)';
-  ctx.fillRect(px, py, S, S);
-
-  for (let y = 0; y < РАЗМЕР_КАРТЫ; y++) {
-    for (let x = 0; x < РАЗМЕР_КАРТЫ; x++) {
-      const клетка = КАРТА[y * РАЗМЕР_КАРТЫ + x];
-      if (!клетка) continue;
-      const worldX = x + 0.5;
-      const worldY = y + 0.5;
-      const dx = worldX - игрок.x;
-      const dy = worldY - игрок.y;
-      if (Math.abs(dx) > дальность || Math.abs(dy) > дальность) continue;
-
-      const экX = цx + dx * к;
-      const экY = цy + dy * к;
-
-      let цвет0;
-      if (клетка === 1) цвет0 = 'rgba(150,110,60,0.92)';
-      else if (клетка === 2) цвет0 = 'rgba(150,85,65,0.92)';
-      else if (клетка === 3) цвет0 = 'rgba(125,120,112,0.92)';
-      else if (клетка === 4) цвет0 = 'rgba(210,175,80,0.95)';
-      else if (клетка === 5) цвет0 = 'rgba(90,85,80,0.92)';
-      else цвет0 = 'rgba(150,110,60,0.9)';
-
-      ctx.fillStyle = цвет0;
-      ctx.fillRect(экX - к * 0.5, экY - к * 0.5, к + 0.5, к + 0.5);
-    }
-  }
-
-  /* Враги */
-  for (const с of спрайты) {
-    if (с.тип !== 'враг') continue;
-    const dx = с.x - игрок.x;
-    const dy = с.y - игрок.y;
-    if (Math.abs(dx) > дальность || Math.abs(dy) > дальность) continue;
-    ctx.fillStyle = '#e0503c';
-    ctx.beginPath();
-    ctx.arc(цx + dx * к, цy + dy * к, 3.2, 0, ДВА_ПИ);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,220,180,0.5)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-
-  /* Декор */
-  for (const с of спрайты) {
-    if (с.тип !== 'кактус' && с.тип !== 'бочка') continue;
-    const dx = с.x - игрок.x;
-    const dy = с.y - игрок.y;
-    if (Math.abs(dx) > дальность || Math.abs(dy) > дальность) continue;
-    ctx.fillStyle = с.тип === 'кактус' ? 'rgba(80,150,80,0.9)' : 'rgba(170,110,60,0.9)';
-    ctx.beginPath();
-    ctx.arc(цx + dx * к, цy + dy * к, 2.2, 0, ДВА_ПИ);
-    ctx.fill();
-  }
-
-  /* Игрок */
-  ctx.fillStyle = '#fff6d8';
-  ctx.beginPath();
-  ctx.arc(цx, цy, 4.5, 0, ДВА_ПИ);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-  ctx.lineWidth = 1.2;
-  ctx.stroke();
-
-  /* Направление */
-  ctx.strokeStyle = 'rgba(255,246,216,0.85)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(цx, цy);
-  ctx.lineTo(цx + Math.cos(игрок.угол) * 18, цy + Math.sin(игрок.угол) * 18);
-  ctx.stroke();
-
-  /* Сектор обзора */
-  ctx.fillStyle = 'rgba(255,200,120,0.13)';
-  ctx.beginPath();
-  ctx.moveTo(цx, цy);
-  ctx.arc(цx, цy, 42, игрок.угол - 0.5, игрок.угол + 0.5);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.restore();
-
-  /* Рамка */
-  ctx.strokeStyle = 'rgba(220,190,140,0.6)';
-  ctx.lineWidth = 2;
-  скругПрямоуг(ctx, px, py, S, S, 8);
-  ctx.stroke();
-
-  ctx.fillStyle = 'rgba(220,190,140,0.85)';
-  ctx.font = 'bold 11px Georgia, serif';
-  ctx.textAlign = 'left';
-  ctx.fillText('КАРТА', px + 8, py - 6);
-}
-
-/* ---------- Кнопки тача ---------- */
-function нарисоватьКнопкиТач() {
-  for (const к of кнопки) {
-    const x = к.x(), y = к.y(), r = к.r;
-
-    ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.beginPath();
-    ctx.arc(x, y + 3, r + 2, 0, ДВА_ПИ);
-    ctx.fill();
-
-    const гр = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, 2, x, y, r);
-    гр.addColorStop(0, к.цвет);
-    гр.addColorStop(1, 'rgba(40,25,12,0.95)');
-    ctx.fillStyle = гр;
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, ДВА_ПИ);
-    ctx.fill();
-
-    ctx.strokeStyle = 'rgba(220,190,140,0.7)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, ДВА_ПИ);
-    ctx.stroke();
-
-    /* Блик */
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.beginPath();
-    ctx.arc(x - r * 0.3, y - r * 0.3, r * 0.5, 0, ДВА_ПИ);
-    ctx.fill();
-
-    ctx.fillStyle = '#f0dcae';
-    ctx.font = 'bold 13px Georgia, serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(0,0,0,0.8)';
-    ctx.shadowBlur = 3;
-    ctx.fillText(к.метка, x, y + 1);
-    ctx.shadowBlur = 0;
-    ctx.textBaseline = 'alphabetic';
-    ctx.textAlign = 'left';
-
-    ctx.restore();
-  }
-}
-
-function нарисоватьСтик(ст, цвет_ст) {
-  if (!ст.активен) return;
-  const { ox, oy, x, y } = ст;
-
-  ctx.save();
-  ctx.fillStyle = 'rgba(20,12,6,0.35)';
-  ctx.beginPath();
-  ctx.arc(ox, oy, РАДИУС_СТИКА, 0, ДВА_ПИ);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(220,190,140,0.4)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(ox, oy, РАДИУС_СТИКА, 0, ДВА_ПИ);
-  ctx.stroke();
-
-  const dx = x - ox, dy = y - oy;
-  const дл = Math.hypot(dx, dy);
-  const макс = РАДИУС_СТИКА;
-  let кx, кy;
-  if (дл > макс) {
-    кx = ox + dx / дл * макс;
-    кy = oy + dy / дл * макс;
-  } else {
-    кx = x; кy = y;
-  }
-
-  const гр = ctx.createRadialGradient(кx, кy, 2, кx, кy, 30);
-  гр.addColorStop(0, цвет_ст);
-  гр.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = гр;
-  ctx.beginPath();
-  ctx.arc(кx, кy, 30, 0, ДВА_ПИ);
-  ctx.fill();
-
-  ctx.fillStyle = 'rgba(240,220,174,0.9)';
-  ctx.beginPath();
-  ctx.arc(кx, кy, 20, 0, ДВА_ПИ);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(90,60,25,0.9)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(кx, кy, 20, 0, ДВА_ПИ);
-  ctx.stroke();
-
-  /* Блик */
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
-  ctx.beginPath();
-  ctx.arc(кx - 5, кy - 5, 6, 0, ДВА_ПИ);
-  ctx.fill();
-
-  ctx.restore();
-}
-
-/* ---------- Меню ---------- */
-function нарисоватьМеню() {
-  ctx.fillStyle = 'rgba(14,9,5,0.75)';
-  ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
-
-  const гр = ctx.createRadialGradient(Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, 80, Ш_ЭКРАНА / 2, В_ЭКРАНА / 2, Math.max(Ш_ЭКРАНА, В_ЭКРАНА) * 0.85);
-  гр.addColorStop(0, 'rgba(90,60,25,0.30)');
-  гр.addColorStop(1, 'rgba(0,0,0,0.85)');
-  ctx.fillStyle = гр;
-  ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
-
-  ctx.textAlign = 'center';
-
-  ctx.fillStyle = '#e8c98a';
-  ctx.font = 'bold ' + Math.min(70, Ш_ЭКРАНА / 12) + 'px Georgia, serif';
-  ctx.shadowColor = 'rgba(0,0,0,0.9)';
-  ctx.shadowBlur = 14;
-  ctx.fillText('RED DEAD 3D', Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 - 130);
-  ctx.shadowBlur = 0;
-
-  ctx.fillStyle = 'rgba(232,201,138,0.6)';
-  ctx.font = Math.min(20, Ш_ЭКРАНА / 32) + 'px Georgia, serif';
-  ctx.fillText('— вестерн от первого лица —', Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 - 88);
-
-  ctx.fillStyle = 'rgba(232,220,190,0.9)';
-  ctx.font = Math.min(16, Ш_ЭКРАНА / 48) + 'px Georgia, serif';
-
-  const строки = ЭТО_ТАЧ ? [
-    'Левый палец — виртуальный стик движения',
-    'Правый палец — обзор, короткий тап — выстрел',
-    'Кнопки: ПЕР — перезарядка, ГЛАЗ — Меткий глаз, БЕГ — бег'
-  ] : [
-    'WASD — движение        Мышь — обзор        ЛКМ — огонь',
-    'R — перезарядка        Q — Меткий глаз    Shift — бег',
-    'Целься мышью в центр экрана — там летят пули'
-  ];
-
-  строки.forEach((т, i) => {
-    ctx.fillText(т, Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 - 20 + i * 32);
-  });
-
-  const пульс = 0.55 + Math.sin(performance.now() / 350) * 0.45;
-  ctx.fillStyle = 'rgba(255,225,150,' + пульс + ')';
-  ctx.font = 'bold ' + Math.min(24, Ш_ЭКРАНА / 30) + 'px Georgia, serif';
-  ctx.fillText(ЭТО_ТАЧ ? 'КОСНИСЬ ЭКРАНА, ЧТОБЫ НАЧАТЬ' : 'КЛИКНИ ИЛИ ПРОБЕЛ — НАЧАТЬ',
-               Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 + 150);
-
-  ctx.textAlign = 'left';
-}
-
-/* ---------- Конец игры ---------- */
-function нарисоватьКонец() {
-  ctx.fillStyle = 'rgba(30,4,4,0.75)';
-  ctx.fillRect(0, 0, Ш_ЭКРАНА, В_ЭКРАНА);
-
-  ctx.textAlign = 'center';
-
-  ctx.fillStyle = '#c0392b';
-  ctx.font = 'bold ' + Math.min(72, Ш_ЭКРАНА / 10) + 'px Georgia, serif';
-  ctx.shadowColor = 'rgba(0,0,0,0.9)';
-  ctx.shadowBlur = 14;
-  ctx.fillText('ТЫ ПОГИБ', Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 - 80);
-  ctx.shadowBlur = 0;
-
-  ctx.fillStyle = '#e8c98a';
-  ctx.font = 'bold 32px Georgia, serif';
-  ctx.fillText('$ ' + счёт, Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 + 6);
-
-  ctx.fillStyle = 'rgba(232,220,190,0.85)';
-  ctx.font = Math.min(18, Ш_ЭКРАНА / 44) + 'px Georgia, serif';
-  ctx.fillText('Врагов уложено: ' + убийств, Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 + 50);
-  ctx.fillText('Продержался: ' + Math.floor(время) + ' секунд', Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 + 78);
-
-  const пульс = 0.55 + Math.sin(performance.now() / 350) * 0.45;
-  ctx.fillStyle = 'rgba(255,225,150,' + пульс + ')';
-  ctx.font = 'bold ' + Math.min(22, Ш_ЭКРАНА / 36) + 'px Georgia, serif';
-  ctx.fillText(ЭТО_ТАЧ ? 'КОСНИСЬ ЭКРАНА — НАЧАТЬ ЗАНОВО' : 'НАЖМИ  R  ЧТОБЫ НАЧАТЬ ЗАНОВО',
-               Ш_ЭКРАНА / 2, В_ЭКРАНА / 2 + 150);
-
-  ctx.textAlign = 'left';
-}
-
-/* ==========================================================
-   13. ГЛАВНЫЙ ЦИКЛ
-   ========================================================== */
-let последнийКадр = performance.now();
-
-function цикл(t) {
-  let dt = (t - последнийКадр) / 1000;
-  последнийКадр = t;
-  if (dt > 0.05) dt = 0.05;
+// ============================================================
+// 24. MAIN LOOP
+// ============================================================
+let lastTime = performance.now();
+
+function loop(t) {
+  let dt = (t - lastTime) / 1000;
+  lastTime = t;
+  if (dt > 0.1) dt = 0.1;
   if (dt < 0) dt = 0;
 
-  обновить(dt);
-  отрисоватьКадр();
-  нарисоватьПоверх();
+  if (state === 'play') {
+    gameTime += dt;
+    updatePlayer(dt);
+    updateEnemies(dt);
+    updateEffects(dt);
+    updateCamera(dt);
+  } else if (state === 'gameover') {
+    updateEffects(dt);
+    updateCamera(dt);
+  } else if (state === 'menu') {
+    cam.yaw += dt * 0.15;
+    // Медленное вращение вокруг деревни в меню
+    const r = 25;
+    camera.position.x = Math.sin(cam.yaw) * r;
+    camera.position.z = 5 + Math.cos(cam.yaw) * r;
+    camera.position.y = 6;
+    camera.lookAt(0, 2, -10);
+  }
 
-  requestAnimationFrame(цикл);
+  updateHUD(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
 }
 
-/* ==========================================================
-   14. СТАРТ
-   ========================================================== */
-window.addEventListener('touchstart', function однажды() {
-  window.removeEventListener('touchstart', однажды);
-  window.scrollTo(0, 1);
-}, { passive: true });
+// ============================================================
+// 25. РЕСАЙЗ
+// ============================================================
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  positionButtons();
+});
 
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    positionButtons();
+  }, 150);
+});
+
+// ============================================================
+// 26. КНОПКИ UI
+// ============================================================
+document.getElementById('startBtn').addEventListener('click', startGame);
+document.getElementById('restartBtn').addEventListener('click', startGame);
+
+// Настройка текста подсказки под устройство
+if (!ЭТО_ТАЧ) {
+  document.getElementById('menuHelp').innerHTML =
+    'WASD — движение<br>Мышь — камера<br>ЛКМ — огонь · R — перезарядка · Q — меткий глаз · E — конь';
+}
+
+// Предотвращение жестов iOS
 document.addEventListener('gesturestart', e => e.preventDefault());
 document.addEventListener('gesturechange', e => e.preventDefault());
 document.addEventListener('gestureend', e => e.preventDefault());
 
-requestAnimationFrame(цикл);
+// Скрываем адресную строку iOS
+window.addEventListener('touchstart', function once() {
+  window.removeEventListener('touchstart', once);
+  window.scrollTo(0, 1);
+}, { passive: true });
+
+// ============================================================
+// 27. ИНИЦИАЛИЗАЦИЯ
+// ============================================================
+updatePlayerMesh();
+requestAnimationFrame(loop);
+
+})();
 </script>
 </body>
 </html>
